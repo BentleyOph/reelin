@@ -1,6 +1,6 @@
 // app/api/generate/script/route.ts
-import { NextResponse,NextRequest } from "next/server";
-import { generateScript } from "@/lib/ai";
+import { NextResponse, NextRequest } from "next/server";
+import { generateScript } from "@/lib/ai_script_gemini";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,10 +13,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const script = await generateScript(description);
+    const result = await generateScript(description);
 
+    // Return the response with the correct structure
     return NextResponse.json({
-      script,
+      ...result,
       projectId,
     });
     

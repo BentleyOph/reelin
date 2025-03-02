@@ -21,7 +21,7 @@ export async function generateAudio(text: string, outputPath: string, config?: A
       }
     );
 
-    // Get stream and headers
+    // Get stream and headersz
     const stream = await response.getStream();
     const headers = await response.getHeaders();
 
