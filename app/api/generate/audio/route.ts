@@ -15,13 +15,13 @@ export async function POST(req: NextRequest) {
 
     // Generate unique filename based on timestamp and random string
     const filename = `${Date.now()}-${Math.random().toString(36).substring(7)}.wav`;
-    const outputPath = path.join(process.cwd(), 'gen_audios', 'audio', filename);
+    const outputPath = path.join(process.cwd(), 'gen_media', 'audio', filename);
 
     const result = await generateAudio(text, outputPath, config);
 
     return NextResponse.json({
       success: true,
-      audioUrl: `/audio/${filename}`,
+      audioUrl: `/api/media/audio/${filename}`,
       headers: result.headers
     });
 

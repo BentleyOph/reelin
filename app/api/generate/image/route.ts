@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
       mediaResults.push({
         prompt: scene.description,
         filename,
-        url: `/media/${filename}`,
+        url: `/api/media/images/${filename}`,
         duration: scene.duration || null,
       });
     }

@@ -30,11 +30,11 @@ export default function MediaGenerator({
     setIsGenerating(true);
     try {
       // Call your AI API to generate media clips based on the script
-      const response = await fetch("/api/generate/media", {
+      const response = await fetch("/api/generate/video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          projectId, 
+          projectId:projectId,
           script,
           customPrompt: customPrompt.trim() ? customPrompt : undefined
         }),
