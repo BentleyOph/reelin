@@ -63,3 +63,18 @@ async function getAudioBuffer(response: ReadableStream): Promise<Buffer> {
 
   return Buffer.from(dataArray.buffer);
 }
+
+
+export async function getWordTimestamps(audioFilePath: string){
+  const {result} = await deepgram.listen.prerecorded.transcribeFile(fs.readFileSync(audioFilePath), {
+  model: "nova-2",
+  smart_format: true,
+});
+
+  if (result) {
+      return result.results.channels[0].alternatives[0].words;
+  } else {
+  throw Error("transcription result is null");
+  }
+
+}
