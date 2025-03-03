@@ -7,7 +7,6 @@ CREATE TABLE IF NOT EXISTS projects (
   user_id TEXT NOT NULL,
   script TEXT,
   scenes JSONB,
-  audio_url TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

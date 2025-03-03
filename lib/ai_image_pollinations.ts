@@ -5,12 +5,13 @@ export type ImageGenerationOptions = {
   seed?: number;
 };
 
-export type GeneratedImage = {
+export interface GeneratedImage {
   prompt: string;
-  filename: string;
-  url: string;
+  filename: string | null;
+  url: string | null;
   duration: number | null;
-};
+  error?: string;
+}
 
 export async function generateImage(
   prompt: string,

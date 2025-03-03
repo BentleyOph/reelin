@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
 import { generateImage, GeneratedImage } from "@/lib/ai_image_pollinations";
+import { generateImageFal } from "@/lib/ai_image_fal";
+import { downloadImage } from "@/lib/utils";
 
 type Scene = {
   description: string;
@@ -36,19 +38,54 @@ export async function POST(req: NextRequest) {
       const scene = scenes[i];
       if (!scene.description) continue;
 
-      const imageBuffer = await generateImage(scene.description);
+      try {
+        // Try primary service first
+        const imageBuffer = await generateImage(scene.description);
+        
+        // Create a unique filename
+        const filename = `scene-${i}-${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
+        const outputPath = path.join(outputDir, filename);
+        await fs.promises.writeFile(outputPath, imageBuffer);
 
-      // Create a unique filename
-      const filename = `scene-${i}-${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
-      const outputPath = path.join(outputDir, filename);
-      await fs.promises.writeFile(outputPath, imageBuffer);
-
-      mediaResults.push({
-        prompt: scene.description,
-        filename,
-        url: `/api/media/images/${filename}`,
-        duration: scene.duration || null,
-      });
+        mediaResults.push({
+          prompt: scene.description,
+          filename,
+          url: `/api/media/images/${filename}`,
+          duration: scene.duration || null,
+        });
+      } catch (primaryError) {
+        console.warn("Primary image generation failed, trying fallback:", primaryError);
+        
+        try {
+          // Use FAL.ai as fallback
+          const { imageUrl } = await generateImageFal(scene.description);
+          
+          // Download the image using our helper instead of axios
+          const imageBuffer = await downloadImage(imageUrl);
+          
+          // Create a unique filename
+          const filename = `scene-${i}-fal-${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
+          const outputPath = path.join(outputDir, filename);
+          await fs.promises.writeFile(outputPath, imageBuffer);
+          
+          mediaResults.push({
+            prompt: scene.description,
+            filename,
+            url: `/api/media/images/${filename}`,
+            duration: scene.duration || null,
+          });
+        } catch (fallbackError) {
+          console.error("Both image generation services failed:", fallbackError);
+          // Continue to next scene instead of failing the entire request
+          mediaResults.push({
+            prompt: scene.description,
+            filename: null,
+            url: null,
+            duration: scene.duration || null,
+            error: "Failed to generate image for this scene"
+          });
+        }
+      }
     }
 
     return NextResponse.json({

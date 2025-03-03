@@ -30,7 +30,7 @@ export async function generateAudio(text: string, outputPath: string, config?: A
     }
 
     // Convert stream to buffer
-    const buffer = await getAudioBuffer(stream); 
+    const buffer = await getAudioBuffer(stream);
 
     // Write to file
     await fs.promises.writeFile(outputPath, buffer);
@@ -64,17 +64,35 @@ async function getAudioBuffer(response: ReadableStream): Promise<Buffer> {
   return Buffer.from(dataArray.buffer);
 }
 
+export async function getWordTimestamps(audioFilePath: string) {
+  try {
+    console.log(`Reading audio file for timestamps from: ${audioFilePath}`);
 
-export async function getWordTimestamps(audioFilePath: string){
-  const {result} = await deepgram.listen.prerecorded.transcribeFile(fs.readFileSync(audioFilePath), {
-  model: "nova-2",
-  smart_format: true,
-});
+    // Check if file exists first
+    if (!fs.existsSync(audioFilePath)) {
+      throw new Error(`Audio file not found at path: ${audioFilePath}`);
+    }
 
-  if (result) {
+    const audioBuffer = fs.readFileSync(audioFilePath);
+    console.log(`Audio file size: ${audioBuffer.length} bytes`);
+
+    const { result } = await deepgram.listen.prerecorded.transcribeFile(audioBuffer, {
+      model: "nova-2",
+      smart_format: true,
+    });
+
+    if (result) {
       return result.results.channels[0].alternatives[0].words;
-  } else {
-  throw Error("transcription result is null");
+    } else {
+      throw Error("transcription result is null");
+    }
+  } catch (error) {
+    console.error(`Error generating word timestamps: ${error}`);
+    // Return a fallback empty result to prevent the entire process from failing
+    return {
+      utterances: [],
+      words: [],
+      error: `Failed to generate timestamps: ${error.message || error}`
+    };
   }
-
 }

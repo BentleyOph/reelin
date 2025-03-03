@@ -1,5 +1,4 @@
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
-import { ZyphraClient } from '@zyphra/client';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 

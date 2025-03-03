@@ -5,6 +5,7 @@ export interface Scene {
   imageUrl?: string;
   videoUrl?: string;
   audioUrl?: string;
+  transcriptUrl?: string;  // Added transcriptUrl property
   order: number;
 }
 
