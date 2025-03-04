@@ -1,0 +1,4610 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix. The content has been processed where security check has been disabled.
+
+================================================================
+File Summary
+================================================================
+
+Purpose:
+--------
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+
+File Format:
+------------
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Multiple file entries, each consisting of:
+  a. A separator line (================)
+  b. The file path (File: path/to/file)
+  c. Another separator line
+  d. The full contents of the file
+  e. A blank line
+
+Usage Guidelines:
+-----------------
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+
+Notes:
+------
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Security check has been disabled - content may contain sensitive information
+
+Additional Info:
+----------------
+
+================================================================
+Directory Structure
+================================================================
+app/
+  api/
+    generate/
+      audio/
+        route.ts
+      image/
+        route.ts
+      script/
+        route.ts
+      video/
+        route.ts
+    media/
+      [...path]/
+        route.ts
+    projects/
+      [id]/
+        route.ts
+      generate/
+        route.ts
+      route.ts
+  dashboard/
+    page.tsx
+  projects/
+    [id]/
+      edit/
+        page.tsx
+      preview/
+        page.tsx
+    new/
+      page.tsx
+  globals.css
+  layout.tsx
+  page.tsx
+components/
+  project/
+    MediaGenerator.tsx
+    ScriptGenerator.tsx
+    SubtitleEditor.tsx
+    Timeline.tsx
+    VoiceSelector.tsx
+  ui/
+    button.tsx
+    card.tsx
+    input.tsx
+    label.tsx
+    radio-group.tsx
+    slider.tsx
+    tabs.tsx
+    textarea.tsx
+lib/
+  supabase/
+    client.ts
+  ai_image_fal.ts
+  ai_image_pollinations.ts
+  ai_script_gemini.ts
+  ai_voice.ts
+  fal_image_to_video.ts
+  project-helpers.ts
+  project-service.ts
+  utils.ts
+public/
+  file.svg
+  globe.svg
+  next.svg
+  vercel.svg
+  window.svg
+supabase/
+  .branches/
+    _current_branch
+  .temp/
+    cli-latest
+  migrations/
+    20240101000000_create_projects_table.sql
+  seed.sql
+types/
+  project.ts
+.gitignore
+components.json
+context.md
+eslint.config.mjs
+instructions.md
+middleware.ts
+next.config.ts
+package.json
+postcss.config.mjs
+tsconfig.json
+
+================================================================
+Files
+================================================================
+
+================
+File: app/api/generate/audio/route.ts
+================
+import { NextRequest, NextResponse } from "next/server";
+import path from "path";
+import { generateAudio } from "@/lib/ai_voice";
+
+export async function POST(req: NextRequest) {
+  try {
+    const { text, config } = await req.json();
+
+    if (!text) {
+      return NextResponse.json(
+        { error: "Text is required" },
+        { status: 400 }
+      );
+    }
+
+    // Generate unique filename based on timestamp and random string
+    const filename = `${Date.now()}-${Math.random().toString(36).substring(7)}.wav`;
+    const outputPath = path.join(process.cwd(), 'gen_media', 'audio', filename);
+
+    const result = await generateAudio(text, outputPath, config);
+
+    return NextResponse.json({
+      success: true,
+      audioUrl: `/api/media/audio/${filename}`,
+      headers: result.headers
+    });
+
+  } catch (error) {
+    console.error("Error in audio generation route:", error);
+    return NextResponse.json(
+      { error: "Failed to generate audio" },
+      { status: 500 }
+    );
+  }
+}
+
+================
+File: app/api/generate/image/route.ts
+================
+import { NextRequest, NextResponse } from "next/server";
+import path from "path";
+import fs from "fs";
+import { generateImage, GeneratedImage } from "@/lib/ai_image_pollinations";
+import { generateImageFal } from "@/lib/ai_image_fal";
+import { downloadImage } from "@/lib/utils";
+
+type Scene = {
+  description: string;
+  duration?: number;
+};
+
+type RequestBody = {
+  script: string;
+  scenes: Scene[];
+  projectId: string | number;
+};
+
+export async function POST(req: NextRequest) {
+  try {
+    const { script, scenes, projectId } = await req.json() as RequestBody;
+
+    if (!script || !scenes || !Array.isArray(scenes) || scenes.length === 0) {
+      return NextResponse.json(
+        { error: "Script and scenes are required" },
+        { status: 400 }
+      );
+    }
+
+    // Ensure output directory exists
+    const outputDir = path.join(process.cwd(), "gen_media", "images");
+    await fs.promises.mkdir(outputDir, { recursive: true });
+
+    const mediaResults: GeneratedImage[] = [];
+
+    // Generate images for each scene
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i];
+      if (!scene.description) continue;
+
+      try {
+        // Try primary service first
+        const imageBuffer = await generateImage(scene.description);
+        
+        // Create a unique filename
+        const filename = `scene-${i}-${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
+        const outputPath = path.join(outputDir, filename);
+        await fs.promises.writeFile(outputPath, imageBuffer);
+
+        mediaResults.push({
+          prompt: scene.description,
+          filename,
+          url: `/api/media/images/${filename}`,
+          duration: scene.duration || null,
+        });
+      } catch (primaryError) {
+        console.warn("Primary image generation failed, trying fallback:", primaryError);
+        
+        try {
+          // Use FAL.ai as fallback
+          const { imageUrl } = await generateImageFal(scene.description);
+          
+          // Download the image using our helper instead of axios
+          const imageBuffer = await downloadImage(imageUrl);
+          
+          // Create a unique filename
+          const filename = `scene-${i}-fal-${Date.now()}-${Math.random().toString(36).substring(7)}.png`;
+          const outputPath = path.join(outputDir, filename);
+          await fs.promises.writeFile(outputPath, imageBuffer);
+          
+          mediaResults.push({
+            prompt: scene.description,
+            filename,
+            url: `/api/media/images/${filename}`,
+            duration: scene.duration || null,
+          });
+        } catch (fallbackError) {
+          console.error("Both image generation services failed:", fallbackError);
+          // Continue to next scene instead of failing the entire request
+          mediaResults.push({
+            prompt: scene.description,
+            filename: null,
+            url: null,
+            duration: scene.duration || null,
+            error: "Failed to generate image for this scene"
+          });
+        }
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      media: mediaResults,
+      projectId,
+    });
+    
+  } catch (error) {
+    console.error("Error in media generation endpoint:", error);
+    return NextResponse.json(
+      { error: "Failed to generate media" },
+      { status: 500 }
+    );
+  }
+}
+
+================
+File: app/api/generate/script/route.ts
+================
+// app/api/generate/script/route.ts
+import { NextResponse, NextRequest } from "next/server";
+import { generateScript } from "@/lib/ai_script_gemini";
+
+export async function POST(request: NextRequest) {
+  try {
+    const { projectId, description } = await request.json();
+
+    if (!description) {
+      return NextResponse.json(
+        { error: "Description is required" },
+        { status: 400 }
+      );
+    }
+
+    const result = await generateScript(description);
+
+    // Return the response with the correct structure
+    return NextResponse.json({
+      ...result,
+      projectId,
+    });
+    
+  } catch (error) {
+    console.error("Script generation error:", error);
+    return NextResponse.json(
+      { error: "Failed to generate script" },
+      { status: 500 }
+    );
+  }
+}
+
+================
+File: app/api/generate/video/route.ts
+================
+import { NextRequest, NextResponse } from "next/server";
+import { convertImageToVideo } from "@/lib/fal_image_to_video";
+import path from "path";
+import fs from "fs";
+
+export async function POST(req: NextRequest) {
+  try {
+    const { imageUrl, prompt, projectId } = await req.json();
+
+    if (!imageUrl || !prompt) {
+      return NextResponse.json(
+        { error: "Image URL and prompt are required" },
+        { status: 400 }
+      );
+    }
+
+    // Convert the local image URL to absolute URL.
+    const absoluteImageUrl = new URL(imageUrl, req.url).toString();
+
+    // Generate video from image
+    const { videoUrl, requestId } = await convertImageToVideo(
+      absoluteImageUrl,
+      prompt
+    );
+
+    // Download and save the video locally
+    const response = await fetch(videoUrl);
+    const videoBuffer = await response.arrayBuffer();
+
+    // Create unique filename
+    const filename = `video-${Date.now()}-${Math.random().toString(36).substring(7)}.mp4`;
+    const outputDir = path.join(process.cwd(), "gen_media", "videos");
+    await fs.promises.mkdir(outputDir, { recursive: true });
+    
+    const outputPath = path.join(outputDir, filename);
+    await fs.promises.writeFile(outputPath, Buffer.from(videoBuffer));
+
+    return NextResponse.json({
+      success: true,
+      videoUrl: `/api/media/videos/${filename}`,
+      requestId,
+      projectId,
+    });
+
+  } catch (error) {
+    console.error("Error in video generation:", error);
+    return NextResponse.json(
+      { error: "Failed to generate video" },
+      { status: 500 }
+    );
+  }
+}
+
+================
+File: app/api/media/[...path]/route.ts
+================
+import { NextRequest, NextResponse } from "next/server";
+import { join } from "path";
+import { stat, readFile } from "fs/promises";
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { path: string[] } }
+) {
+  try {
+    // Reconstruct the file path from the URL segments
+    const filePath = join(process.cwd(), "gen_media", ...params.path);
+
+    // Prevent directory traversal attacks
+    if (!filePath.startsWith(join(process.cwd(), "gen_media"))) {
+      return new NextResponse("Invalid path", { status: 403 });
+    }
+
+    try {
+      // Check if file exists and get its stats
+      const stats = await stat(filePath);
+      
+      if (!stats.isFile()) {
+        return new NextResponse("Not found", { status: 404 });
+      }
+
+      // Read the file
+      const file = await readFile(filePath);
+
+      // Determine content type
+      const contentType = getContentType(filePath);
+
+      // Return the file with appropriate headers
+      return new NextResponse(file, {
+        headers: {
+          "Content-Type": contentType,
+          "Content-Length": stats.size.toString(),
+          "Cache-Control": "public, max-age=31536000",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    } catch (e) {
+      return new NextResponse("Not found", { status: 404 });
+    }
+  } catch (e) {
+    console.error("Error serving media file:", e);
+    return new NextResponse("Internal error", { status: 500 });
+  }
+}
+
+function getContentType(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase();
+  const contentTypes: Record<string, string> = {
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'mp4': 'video/mp4',
+    'wav': 'audio/wav',
+    'mp3': 'audio/mpeg',
+  };
+
+  return contentTypes[ext || ''] || 'application/octet-stream';
+}
+
+================
+File: app/api/projects/[id]/route.ts
+================
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/lib/supabase/client';
+
+export async function GET(
+  req: NextRequest, 
+  { params }: { params: { id: string } }
+) {
+  try {
+    const id = params.id;
+
+    const { data, error } = await supabaseAdmin
+      .from('projects')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data) {
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ project: data });
+  } catch (error) {
+    console.error('Error fetching project:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch project' },
+      { status: 500 }
+    );
+  }
+}
+
+================
+File: app/api/projects/generate/route.ts
+================
+import { NextRequest, NextResponse } from 'next/server';
+import { generateFullProject } from '@/lib/project-service';
+
+export async function POST(req: NextRequest) {
+  try {
+    const { projectId } = await req.json();
+
+    if (!projectId) {
+      return NextResponse.json(
+        { error: 'Project ID is required' },
+        { status: 400 }
+      );
+    }
+
+    // Start the generation process - this is async and will take time
+    // We'll update the project status as it progresses
+    generateFullProject(projectId).catch(error => {
+      console.error('Error in project generation process:', error);
+    });
+
+    return NextResponse.json({ 
+      success: true,
+      message: 'Project generation started',
+      projectId
+    });
+  } catch (error) {
+    console.error('Error triggering project generation:', error);
+    return NextResponse.json(
+      { error: 'Failed to start project generation' },
+      { status: 500 }
+    );
+  }
+}
+
+================
+File: app/api/projects/route.ts
+================
+import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/lib/supabase/client';
+import { ProjectCreateRequest, ProjectUpdateRequest, Project } from '@/types/project';
+import { generateFullProject } from '@/lib/project-service';
+
+// Get all projects for a user
+export async function GET(req: NextRequest) {
+  try {
+    const searchParams = req.nextUrl.searchParams;
+    const userId = searchParams.get('userId');
+    
+    if (!userId) {
+      return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('projects')
+      .select('*')
+      .eq('userId', userId)
+      .order('createdAt', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    return NextResponse.json({ projects: data || [] });
+  } catch (error) {
+    console.error('Error fetching projects:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch projects' },
+      { status: 500 }
+    );
+  }
+}
+
+// Create a new project
+export async function POST(req: NextRequest) {
+  try {
+    const { title, description, userId } = await req.json() as ProjectCreateRequest & { userId: string };
+
+    if (!title || !description || !userId) {
+      return NextResponse.json(
+        { error: 'Title, description and userId are required' },
+        { status: 400 }
+      );
+    }
+
+    const newProject = {
+      title,
+      description,
+      userId,
+      status: 'draft' as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabaseAdmin
+      .from('projects')
+      .insert(newProject)
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return NextResponse.json({ project: data });
+  } catch (error) {
+    console.error('Error creating project:', error);
+    return NextResponse.json(
+      { error: 'Failed to create project' },
+      { status: 500 }
+    );
+  }
+}
+
+// Update a project
+export async function PUT(req: NextRequest) {
+  try {
+    const project = await req.json() as ProjectUpdateRequest;
+    
+    if (!project.id) {
+      return NextResponse.json(
+        { error: 'Project ID is required' },
+        { status: 400 }
+      );
+    }
+
+    const updateData = {
+      ...project,
+      updatedAt: new Date().toISOString(),
+    };
+    delete updateData.id;
+
+    const { data, error } = await supabaseAdmin
+      .from('projects')
+      .update(updateData)
+      .eq('id', project.id)
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return NextResponse.json({ project: data });
+  } catch (error) {
+    console.error('Error updating project:', error);
+    return NextResponse.json(
+      { error: 'Failed to update project' },
+      { status: 500 }
+    );
+  }
+}
+
+// Delete a project
+export async function DELETE(req: NextRequest) {
+  try {
+    const searchParams = req.nextUrl.searchParams;
+    const id = searchParams.get('id');
+    
+    if (!id) {
+      return NextResponse.json(
+        { error: 'Project ID is required' },
+        { status: 400 }
+      );
+    }
+
+    const { error } = await supabaseAdmin
+      .from('projects')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      throw error;
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting project:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete project' },
+      { status: 500 }
+    );
+  }
+}
+
+================
+File: app/dashboard/page.tsx
+================
+// app/dashboard/page.tsx
+"use client";
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
+import { Plus, Video, Clock, Edit, Trash2, PlayCircle } from "lucide-react";
+
+// Mock data - in a real app, this would come from your API
+const MOCK_PROJECTS = [
+  {
+    id: "1",
+    title: "Instagram Coffee Review",
+    description: "Short review of specialty coffee brands",
+    status: "draft",
+    createdAt: "2025-02-25T12:00:00Z",
+    thumbnailUrl: "/api/placeholder/400/225"
+  },
+  {
+    id: "2",
+    title: "TikTok Fitness Tips",
+    description: "Quick workout tips for beginners",
+    status: "ready",
+    createdAt: "2025-02-24T15:30:00Z",
+    thumbnailUrl: "/api/placeholder/400/225"
+  }
+];
+
+type Project = {
+  id: string;
+  title: string;
+  description: string;
+  status: "draft" | "ready";
+  createdAt: string;
+  thumbnailUrl: string;
+};
+
+export default function DashboardPage() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    // In a real app, fetch projects from your API
+    // For MVP, use mock data
+    setProjects(MOCK_PROJECTS);
+    setIsLoading(false);
+  }, []);
+
+  const handleDeleteProject = async (id: string) => {
+    // In a real app, delete from your API
+    setProjects(projects.filter(project => project.id !== id));
+  };
+
+  return (
+    <div className="container mx-auto py-8 px-4">
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-2xl font-bold">Your Reel Projects</h1>
+        <Link href="/projects/new">
+          <Button>
+            <Plus className="mr-2 h-4 w-4" />
+            New Reel
+          </Button>
+        </Link>
+      </div>
+
+      {isLoading ? (
+        <div className="text-center py-10">Loading projects...</div>
+      ) : projects.length === 0 ? (
+        <div className="text-center py-10">
+          <Video className="mx-auto h-12 w-12 text-gray-400" />
+          <h3 className="mt-2 text-lg font-medium">No projects yet</h3>
+          <p className="mt-1 text-gray-500">Get started by creating a new reel</p>
+          <Link href="/projects/new">
+            <Button className="mt-4">
+              <Plus className="mr-2 h-4 w-4" />
+              Create Your First Reel
+            </Button>
+          </Link>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {projects.map((project) => (
+            <Card key={project.id} className="overflow-hidden">
+              <div className="aspect-video relative">
+                <img 
+                  src={project.thumbnailUrl} 
+                  alt={project.title}
+                  className="w-full h-full object-cover"
+                />
+                {project.status === "draft" && (
+                  <div className="absolute top-2 right-2 bg-amber-100 text-amber-800 px-2 py-1 rounded text-xs font-medium">
+                    Draft
+                  </div>
+                )}
+                {project.status === "ready" && (
+                  <div className="absolute top-2 right-2 bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium">
+                    Ready
+                  </div>
+                )}
+              </div>
+              
+              <CardContent className="p-4">
+                <h2 className="font-semibold text-lg">{project.title}</h2>
+                <p className="text-gray-500 text-sm mt-1">{project.description}</p>
+                <div className="flex items-center text-gray-400 text-xs mt-2">
+                  <Clock className="h-3 w-3 mr-1" />
+                  <span>
+                    {new Date(project.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+              </CardContent>
+              
+              <CardFooter className="bg-gray-50 p-4 flex justify-between">
+                {project.status === "draft" ? (
+                  <Link href={`/projects/${project.id}/edit`}>
+                    <Button variant="outline" size="sm">
+                      <Edit className="mr-1 h-4 w-4" />
+                      Continue Editing
+                    </Button>
+                  </Link>
+                ) : (
+                  <Link href={`/projects/${project.id}/preview`}>
+                    <Button variant="outline" size="sm">
+                      <PlayCircle className="mr-1 h-4 w-4" />
+                      Preview
+                    </Button>
+                  </Link>
+                )}
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => handleDeleteProject(project.id)}
+                >
+                  <Trash2 className="h-4 w-4 text-red-500" />
+                </Button>
+              </CardFooter>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+================
+File: app/projects/[id]/edit/page.tsx
+================
+// app/projects/[id]/edit/page.tsx
+"use client";
+
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ScriptGenerator from "@/components/project/ScriptGenerator";
+import VoiceSelector from "@/components/project/VoiceSelector";
+import MediaGenerator from "@/components/project/MediaGenerator";
+import SubtitleEditor from "@/components/project/SubtitleEditor";
+import Timeline from "@/components/project/Timeline";
+import { Loader2, ArrowLeft, ArrowRight } from "lucide-react";
+
+type Project = {
+  id: string;
+  title: string;
+  description: string;
+  script?: string;
+  voiceId?: string;
+  audioUrl?: string;
+  mediaUrls?: string[];
+  subtitles?: Array<{
+    start: number;
+    end: number;
+    text: string;
+  }>;
+};
+
+export default function ProjectEditorPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState("script");
+  const [project, setProject] = useState<Project | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Fetch project data
+  useEffect(() => {
+    const fetchProject = async () => {
+      try {
+        const response = await fetch(`/api/projects/${params.id}`);
+        if (!response.ok) throw new Error("Failed to fetch project");
+        const data = await response.json();
+        setProject(data);
+      } catch (error) {
+        console.error("Error fetching project:", error);
+        // Handle error - perhaps redirect to dashboard with error notification
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchProject();
+  }, [params.id]);
+
+  const handleScriptGenerated = async (script: string) => {
+    if (!project) return;
+    
+    setIsSaving(true);
+    try {
+      await updateProject({ ...project, script });
+      setProject({ ...project, script });
+      setActiveTab("voice");
+    } catch (error) {
+      console.error("Error saving script:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleVoiceGenerated = async (voiceId: string, audioUrl: string) => {
+    if (!project) return;
+    
+    setIsSaving(true);
+    try {
+      await updateProject({ ...project, voiceId, audioUrl });
+      setProject({ ...project, voiceId, audioUrl });
+      setActiveTab("media");
+    } catch (error) {
+      console.error("Error saving voiceover:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleMediaGenerated = async (mediaUrls: string[]) => {
+    if (!project) return;
+    
+    setIsSaving(true);
+    try {
+      await updateProject({ ...project, mediaUrls });
+      setProject({ ...project, mediaUrls });
+      setActiveTab("subtitles");
+    } catch (error) {
+      console.error("Error saving media:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSubtitlesGenerated = async (subtitles: any[]) => {
+    if (!project) return;
+    
+    setIsSaving(true);
+    try {
+      await updateProject({ ...project, subtitles });
+      setProject({ ...project, subtitles });
+      setActiveTab("timeline");
+    } catch (error) {
+      console.error("Error saving subtitles:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleTimelineCompleted = async () => {
+    if (!project) return;
+    
+    setIsSaving(true);
+    try {
+      // In a real app, you might have a separate "finalize" API endpoint
+      await updateProject({ ...project, status: "ready" });
+      router.push(`/projects/${params.id}/preview`);
+    } catch (error) {
+      console.error("Error finalizing project:", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const updateProject = async (updatedProject: any) => {
+    // Send update to API
+    const response = await fetch(`/api/projects/${params.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedProject),
+    });
+    
+    if (!response.ok) throw new Error("Failed to update project");
+    
+    return await response.json();
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="container mx-auto py-8 text-center">
+        <h1 className="text-2xl font-bold">Project not found</h1>
+        <Button 
+          onClick={() => router.push("/dashboard")}
+          className="mt-4"
+        >
+          Return to Dashboard
+        </Button>
+      </div>
+    );
+  }
+
+  // Determine which tabs are enabled based on project state
+  const scriptCompleted = !!project.script;
+  const voiceCompleted = !!project.voiceId && !!project.audioUrl;
+  const mediaCompleted = !!project.mediaUrls && project.mediaUrls.length > 0;
+  const subtitlesCompleted = !!project.subtitles && project.subtitles.length > 0;
+
+  return (
+    <div className="container mx-auto py-6">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold">Editing: {project.title}</h1>
+        <Button
+          variant="outline"
+          onClick={() => router.push("/dashboard")}
+        >
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Back to Dashboard
+        </Button>
+      </div>
+
+      <Card className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="grid grid-cols-5 w-full">
+            <TabsTrigger value="script" disabled={isSaving}>
+              1. Script
+            </TabsTrigger>
+            <TabsTrigger value="voice" disabled={!scriptCompleted || isSaving}>
+              2. Voice
+            </TabsTrigger>
+            <TabsTrigger value="media" disabled={!voiceCompleted || isSaving}>
+              3. Media
+            </TabsTrigger>
+            <TabsTrigger value="subtitles" disabled={!mediaCompleted || isSaving}>
+              4. Subtitles
+            </TabsTrigger>
+            <TabsTrigger value="timeline" disabled={!subtitlesCompleted || isSaving}>
+              5. Timeline
+            </TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="script" className="p-4">
+            <ScriptGenerator
+              projectId={project.id}
+              projectDescription={project.description}
+              onScriptGenerated={handleScriptGenerated}
+              existingScript={project.script || ""}
+            />
+            <div className="flex justify-end mt-4">
+              <Button 
+                onClick={() => scriptCompleted && setActiveTab("voice")}
+                disabled={!scriptCompleted || isSaving}
+              >
+                Next: Voice
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
+          </TabsContent>
+          
+          <TabsContent value="voice" className="p-4">
+            <VoiceSelector
+              projectId={project.id}
+              script={project.script || ""}
+              onVoiceGenerated={handleVoiceGenerated}
+            />
+            <div className="flex justify-between mt-4">
+              <Button 
+                variant="outline"
+                onClick={() => setActiveTab("script")}
+                disabled={isSaving}
+              >
+                <ArrowLeft className="ml-2 h-4 w-4" />
+                Back: Script
+              </Button>
+              <Button 
+                onClick={() => voiceCompleted && setActiveTab("media")}
+                disabled={!voiceCompleted || isSaving}
+              >
+                Next: Media
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
+          </TabsContent>
+          
+          <TabsContent value="media" className="p-4">
+            <MediaGenerator
+              projectId={project.id}
+              script={project.script || ""}
+              onMediaGenerated={handleMediaGenerated}
+              existingMedia={project.mediaUrls}
+            />
+            <div className="flex justify-between mt-4">
+              <Button 
+                variant="outline"
+                onClick={() => setActiveTab("voice")}
+                disabled={isSaving}
+              >
+                <ArrowLeft className="ml-2 h-4 w-4" />
+                Back: Voice
+              </Button>
+              <Button 
+                onClick={() => mediaCompleted && setActiveTab("subtitles")}
+                disabled={!mediaCompleted || isSaving}
+              >
+                Next: Subtitles
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
+          </TabsContent>
+          
+          <TabsContent value="subtitles" className="p-4">
+            <SubtitleEditor
+              projectId={project.id}
+              script={project.script || ""}
+              audioUrl={project.audioUrl}
+              onSubtitlesGenerated={handleSubtitlesGenerated}
+              existingSubtitles={project.subtitles}
+            />
+            <div className="flex justify-between mt-4">
+              <Button 
+                variant="outline"
+                onClick={() => setActiveTab("media")}
+                disabled={isSaving}
+              >
+                <ArrowLeft className="ml-2 h-4 w-4" />
+                Back: Media
+              </Button>
+              <Button 
+                onClick={() => subtitlesCompleted && setActiveTab("timeline")}
+                disabled={!subtitlesCompleted || isSaving}
+              >
+                Next: Timeline
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
+          </TabsContent>
+          
+          <TabsContent value="timeline" className="p-4">
+            <Timeline
+              projectId={project.id}
+              audioUrl={project.audioUrl}
+              mediaUrls={project.mediaUrls}
+              subtitles={project.subtitles}
+              onComplete={handleTimelineCompleted}
+            />
+            <div className="flex justify-between mt-4">
+              <Button 
+                variant="outline"
+                onClick={() => setActiveTab("subtitles")}
+                disabled={isSaving}
+              >
+                <ArrowLeft className="ml-2 h-4 w-4" />
+                Back: Subtitles
+              </Button>
+              <Button 
+                onClick={handleTimelineCompleted}
+                disabled={isSaving}
+              >
+                Finish & Preview
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </Card>
+    </div>
+  );
+}
+
+================
+File: app/projects/[id]/preview/page.tsx
+================
+// app/projects/[id]/preview/page.tsx
+"use client";
+
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { 
+  Card, 
+  CardContent, 
+  CardDescription, 
+  CardFooter, 
+  CardHeader, 
+  CardTitle 
+} from "@/components/ui/card";
+import { Slider } from "@/components/ui/slider";
+import { 
+  Play, 
+  Pause, 
+  Volume2, 
+  VolumeX, 
+  Download, 
+  Share2, 
+  Calendar, 
+  ArrowLeft, 
+  Edit 
+} from "lucide-react";
+
+type Subtitle = {
+  id: string;
+  start: number;
+  end: number;
+  text: string;
+};
+
+type Project = {
+  id: string;
+  title: string;
+  description: string;
+  script: string;
+  voiceId: string;
+  audioUrl: string;
+  mediaUrls: string[];
+  subtitles: Subtitle[];
+  status: string;
+};
+
+export default function ProjectPreviewPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
+  const [project, setProject] = useState<Project | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+  const [activeSubtitle, setActiveSubtitle] = useState<Subtitle | null>(null);
+  
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Fetch project data
+  useEffect(() => {
+    // For MVP, use mock data
+    // In a real app, fetch from your API
+    const fetchProject = async () => {
+      try {
+        // Mock API call
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Mock data
+        const mockProject: Project = {
+          id: params.id,
+          title: "TikTok Fitness Tips",
+          description: "Quick workout tips for beginners",
+          script: "Here are three quick fitness tips for beginners. First, start with just 10 minutes a day. Second, focus on form over weight. Third, consistency beats intensity.",
+          voiceId: "voice2",
+          audioUrl: "/samples/voice2.mp3", // Use a sample for MVP
+          mediaUrls: [
+            "/api/placeholder/800/450",
+            "/api/placeholder/800/450",
+            "/api/placeholder/800/450"
+          ],
+          subtitles: [
+            { id: "sub1", start: 0, end: 2.5, text: "Here are three quick fitness tips for beginners." },
+            { id: "sub2", start: 2.5, end: 5, text: "First, start with just 10 minutes a day." },
+            { id: "sub3", start: 5, end: 7.5, text: "Second, focus on form over weight." },
+            { id: "sub4", start: 7.5, end: 10, text: "Third, consistency beats intensity." }
+          ],
+          status: "ready"
+        };
+        
+        setProject(mockProject);
+      } catch (error) {
+        console.error("Error fetching project:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchProject();
+  }, [params.id]);
+
+  // Initialize audio and set up event listeners
+  useEffect(() => {
+    if (project?.audioUrl) {
+      const audio = new Audio(project.audioUrl);
+      audioRef.current = audio;
+      
+      audio.onloadedmetadata = () => {
+        setDuration(audio.duration);
+      };
+      
+      audio.ontimeupdate = () => {
+        setCurrentTime(audio.currentTime);
+        
+        // Update active subtitle
+        const currentSubtitle = project.subtitles.find(
+          sub => audio.currentTime >= sub.start && audio.currentTime <= sub.end
+        ) || null;
+        
+        setActiveSubtitle(currentSubtitle);
+        
+        // Calculate which media clip should be shown
+        const clipDuration = audio.duration / project.mediaUrls.length;
+        const newMediaIndex = Math.min(
+          Math.floor(audio.currentTime / clipDuration),
+          project.mediaUrls.length - 1
+        );
+        
+        if (newMediaIndex !== activeMediaIndex) {
+          setActiveMediaIndex(newMediaIndex);
+        }
+      };
+      
+      audio.onended = () => {
+        setIsPlaying(false);
+        setCurrentTime(0);
+        audio.currentTime = 0;
+      };
+      
+      return () => {
+        audio.pause();
+      };
+    }
+  }, [project, activeMediaIndex]);
+
+  // Play/pause functionality
+  useEffect(() => {
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.play();
+      } else {
+        audioRef.current.pause();
+      }
+    }
+  }, [isPlaying]);
+
+  // Handle mute functionality
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.muted = isMuted;
+    }
+  }, [isMuted]);
+
+  const handlePlayPause = () => {
+    setIsPlaying(!isPlaying);
+  };
+
+  const handleTimeChange = (value: number[]) => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = value[0];
+      setCurrentTime(value[0]);
+    }
+  };
+
+  const handleDownload = () => {
+    alert("Download functionality would be implemented here");
+    // In a real app, generate and download the final reel
+  };
+
+  const handleShare = () => {
+    alert("Share functionality would be implemented here");
+    // In a real app, show share options or copy link
+  };
+
+  const handleSchedule = () => {
+    alert("Schedule functionality would be implemented here");
+    // In a real app, show scheduling dialog
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="container mx-auto py-8 text-center">
+        <h1 className="text-2xl font-bold">Project not found</h1>
+        <Button 
+          onClick={() => router.push("/dashboard")}
+          className="mt-4"
+        >
+          Return to Dashboard
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto py-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">{project.title}</h1>
+        <div className="space-x-2">
+          <Button variant="outline" onClick={() => router.push(`/projects/${params.id}/edit`)}>
+            <Edit className="w-4 h-4 mr-2" />
+            Edit Project
+          </Button>
+          <Button variant="outline" onClick={() => router.push("/dashboard")}>
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Dashboard
+          </Button>
+        </div>
+      </div>
+
+      <Card>
+        <CardContent className="p-6">
+          <div className="aspect-video bg-black rounded-lg overflow-hidden relative">
+            {/* Preview Image */}
+            <img
+              src={project.mediaUrls[activeMediaIndex]}
+              alt={`Video frame ${activeMediaIndex + 1}`}
+              className="w-full h-full object-cover"
+            />
+
+            {/* Subtitle Overlay */}
+            {activeSubtitle && (
+              <div className="absolute bottom-8 left-0 right-0 text-center">
+                <div className="bg-black/60 text-white px-4 py-2 mx-auto inline-block rounded-lg">
+                  {activeSubtitle.text}
+                </div>
+              </div>
+            )}
+
+            {/* Play/Pause Overlay */}
+            <button
+              onClick={handlePlayPause}
+              className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 hover:opacity-100 transition-opacity"
+            >
+              {isPlaying ? (
+                <Pause className="w-16 h-16 text-white" />
+              ) : (
+                <Play className="w-16 h-16 text-white" />
+              )}
+            </button>
+          </div>
+
+          {/* Controls */}
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center gap-4">
+              <Button size="icon" variant="ghost" onClick={handlePlayPause}>
+                {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              </Button>
+              <Button size="icon" variant="ghost" onClick={() => setIsMuted(!isMuted)}>
+                {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+              </Button>
+              <div className="flex-1">
+                <Slider
+                  value={[currentTime]}
+                  min={0}
+                  max={duration}
+                  step={0.1}
+                  onValueChange={handleTimeChange}
+                />
+              </div>
+              <span className="text-sm text-gray-500">
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </span>
+            </div>
+          </div>
+        </CardContent>
+
+        <CardFooter className="px-6 py-4 border-t flex justify-between">
+          <div className="space-x-2">
+            <Button variant="outline" onClick={handleDownload}>
+              <Download className="w-4 h-4 mr-2" />
+              Download
+            </Button>
+            <Button variant="outline" onClick={handleShare}>
+              <Share2 className="w-4 h-4 mr-2" />
+              Share
+            </Button>
+          </div>
+          <Button onClick={handleSchedule}>
+            <Calendar className="w-4 h-4 mr-2" />
+            Schedule Post
+          </Button>
+        </CardFooter>
+      </Card>
+    </div>
+  );
+}
+
+================
+File: app/projects/new/page.tsx
+================
+// app/projects/new/page.tsx
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+
+export default function NewProjectPage() {
+  const router = useRouter();
+  const [isLoading, setIsLoading] = useState(false);
+  const [projectTitle, setProjectTitle] = useState("");
+  const [projectDescription, setProjectDescription] = useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    
+    try {
+      // Here you would create a new project in your database
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: projectTitle, description: projectDescription }),
+      });
+      
+      if (!response.ok) throw new Error("Failed to create project");
+      
+      const data = await response.json();
+      // Navigate to the script generation page with the new project ID
+      router.push(`/projects/${data.id}/edit`);
+    } catch (error) {
+      console.error("Error creating project:", error);
+      // Add error handling/notification here
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="container mx-auto py-8">
+      <Card className="max-w-2xl mx-auto">
+        <CardHeader>
+          <CardTitle>Create New Reel</CardTitle>
+          <CardDescription>
+            Tell us about the reel you want to create and our AI will help generate it.
+          </CardDescription>
+        </CardHeader>
+        <form onSubmit={handleSubmit}>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="title" className="text-sm font-medium">
+                Reel Title
+              </label>
+              <Input
+                id="title"
+                placeholder="Enter a title for your reel"
+                value={projectTitle}
+                onChange={(e) => setProjectTitle(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="description" className="text-sm font-medium">
+                Description
+              </label>
+              <Textarea
+                id="description"
+                placeholder="Describe what you want in your reel (topic, style, tone, etc.)"
+                rows={5}
+                value={projectDescription}
+                onChange={(e) => setProjectDescription(e.target.value)}
+                required
+              />
+            </div>
+          </CardContent>
+          <CardFooter>
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? "Creating..." : "Create Reel"}
+            </Button>
+          </CardFooter>
+        </form>
+      </Card>
+    </div>
+  );
+}
+
+================
+File: app/globals.css
+================
+@import "tailwindcss";
+
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.87 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.87 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.396 0.141 25.723);
+  --destructive-foreground: oklch(0.637 0.237 25.331);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.439 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.269 0 0);
+  --sidebar-ring: oklch(0.439 0 0);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+================
+File: app/layout.tsx
+================
+// app/layout.tsx
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"] });
+
+export const metadata: Metadata = {
+  title: "AI Reel Maker",
+  description: "Create Instagram and TikTok reels with AI",
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body className={inter.className}>
+        <header className="border-b">
+          <div className="container mx-auto px-4 py-4 flex justify-between items-center">
+            <h1 className="text-xl font-bold">AI Reel Maker</h1>
+            <nav>
+              <ul className="flex space-x-4">
+                <li><a href="/" className="hover:underline">Home</a></li>
+                <li><a href="/dashboard" className="hover:underline">Dashboard</a></li>
+              </ul>
+            </nav>
+          </div>
+        </header>
+        <main>{children}</main>
+      </body>
+    </html>
+  );
+}
+
+================
+File: app/page.tsx
+================
+import Image from "next/image";
+
+export default function Home() {
+  return (
+    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
+      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
+        <Image
+          className="dark:invert"
+          src="/next.svg"
+          alt="Next.js logo"
+          width={180}
+          height={38}
+          priority
+        />
+        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
+          <li className="mb-2">
+            Get started by editing{" "}
+            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
+              app/page.tsx
+            </code>
+            .
+          </li>
+          <li>Save and see your changes instantly.</li>
+        </ol>
+
+        <div className="flex gap-4 items-center flex-col sm:flex-row">
+          <a
+            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
+            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Image
+              className="dark:invert"
+              src="/vercel.svg"
+              alt="Vercel logomark"
+              width={20}
+              height={20}
+            />
+            Deploy now
+          </a>
+          <a
+            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
+            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Read our docs
+          </a>
+        </div>
+      </main>
+      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
+        <a
+          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
+          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <Image
+            aria-hidden
+            src="/file.svg"
+            alt="File icon"
+            width={16}
+            height={16}
+          />
+          Learn
+        </a>
+        <a
+          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
+          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <Image
+            aria-hidden
+            src="/window.svg"
+            alt="Window icon"
+            width={16}
+            height={16}
+          />
+          Examples
+        </a>
+        <a
+          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
+          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <Image
+            aria-hidden
+            src="/globe.svg"
+            alt="Globe icon"
+            width={16}
+            height={16}
+          />
+          Go to nextjs.org →
+        </a>
+      </footer>
+    </div>
+  );
+}
+
+================
+File: components/project/MediaGenerator.tsx
+================
+// components/project/MediaGenerator.tsx
+"use client";
+
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Loader2, Upload, RefreshCw } from "lucide-react";
+
+type MediaGeneratorProps = {
+  projectId: string;
+  script: string;
+  onMediaGenerated: (mediaUrls: string[]) => void;
+};
+
+export default function MediaGenerator({
+  projectId,
+  script,
+  onMediaGenerated,
+}: MediaGeneratorProps) {
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [generatedMedia, setGeneratedMedia] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<string>("generate");
+  const [uploadedMedia, setUploadedMedia] = useState<string[]>([]);
+
+  const generateMediaFromScript = async () => {
+    setIsGenerating(true);
+    try {
+      // Call your AI API to generate media clips based on the script
+      const response = await fetch("/api/generate/video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          projectId:projectId,
+          script,
+          customPrompt: customPrompt.trim() ? customPrompt : undefined
+        }),
+      });
+      
+      if (!response.ok) throw new Error("Failed to generate media");
+      
+      const data = await response.json();
+      setGeneratedMedia(data.mediaUrls);
+    } catch (error) {
+      console.error("Error generating media:", error);
+      // Handle error
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.length) return;
+    
+    const files = Array.from(e.target.files);
+    
+    // Create FormData for upload
+    const formData = new FormData();
+    files.forEach(file => {
+      formData.append('media', file);
+    });
+    formData.append('projectId', projectId);
+    
+    try {
+      const response = await fetch('/api/media/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) throw new Error("Failed to upload media");
+      
+      const data = await response.json();
+      setUploadedMedia([...uploadedMedia, ...data.mediaUrls]);
+    } catch (error) {
+      console.error("Error uploading media:", error);
+      // Handle error
+    }
+  };
+
+  const handleSaveMedia = () => {
+    // Combine generated and uploaded media
+    const allMedia = [...generatedMedia, ...uploadedMedia];
+    onMediaGenerated(allMedia);
+  };
+
+  return (
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle>Media Selection</CardTitle>
+        <CardDescription>
+          Generate video clips or upload your own media
+        </CardDescription>
+      </CardHeader>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid grid-cols-2 mx-6">
+          <TabsTrigger value="generate">Generate Media</TabsTrigger>
+          <TabsTrigger value="upload">Upload Media</TabsTrigger>
+        </TabsList>
+        <CardContent>
+          <TabsContent value="generate" className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="custom-prompt" className="text-sm font-medium">
+                Custom Prompt (Optional)
+              </label>
+              <Textarea
+                id="custom-prompt"
+                placeholder="Enter specific instructions for media generation (e.g., 'urban cityscape', 'nature scenes')"
+                value={customPrompt}
+                onChange={(e) => setCustomPrompt(e.target.value)}
+              />
+              <p className="text-xs text-gray-500">
+                Leave blank to automatically generate media based on your script.
+              </p>
+            </div>
+            
+            <Button 
+              onClick={generateMediaFromScript} 
+              disabled={isGenerating}
+              className="w-full"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Generating Media...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Generate Media
+                </>
+              )}
+            </Button>
+            
+            {generatedMedia.length > 0 && (
+              <div className="mt-4">
+                <h3 className="text-sm font-medium mb-2">Generated Media Clips</h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {generatedMedia.map((url, index) => (
+                    <div key={index} className="aspect-video bg-gray-100 rounded-md overflow-hidden">
+                      <video 
+                        src={url} 
+                        className="w-full h-full object-cover" 
+                        controls
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </TabsContent>
+          
+          <TabsContent value="upload" className="space-y-4">
+            <div className="border-2 border-dashed rounded-md p-6 text-center">
+              <Upload className="mx-auto h-8 w-8 text-gray-400" />
+              <p className="mt-2 text-sm text-gray-500">
+                Upload your own videos or images
+              </p>
+              <Input
+                type="file"
+                accept="video/*,image/*"
+                multiple
+                className="mt-4"
+                onChange={handleFileUpload}
+              />
+            </div>
+            
+            {uploadedMedia.length > 0 && (
+              <div className="mt-4">
+                <h3 className="text-sm font-medium mb-2">Uploaded Media</h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {uploadedMedia.map((url, index) => (
+                    <div key={index} className="aspect-video bg-gray-100 rounded-md overflow-hidden">
+                      {url.endsWith('.mp4') || url.endsWith('.mov') ? (
+                        <video 
+                          src={url} 
+                          className="w-full h-full object-cover" 
+                          controls
+                        />
+                      ) : (
+                        <img 
+                          src={url} 
+                          alt={`Uploaded media ${index}`}
+                          className="w-full h-full object-cover" 
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </TabsContent>
+        </CardContent>
+        <CardFooter>
+          <Button 
+            onClick={handleSaveMedia} 
+            disabled={generatedMedia.length === 0 && uploadedMedia.length === 0}
+            className="ml-auto"
+          >
+            Save & Continue
+          </Button>
+        </CardFooter>
+      </Tabs>
+    </Card>
+  );
+}
+
+================
+File: components/project/ScriptGenerator.tsx
+================
+// components/project/ScriptGenerator.tsx
+"use client";
+
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Loader2 } from "lucide-react";
+
+type ScriptGeneratorProps = {
+  projectId: string;
+  projectDescription: string;
+  onScriptGenerated: (script: string) => void;
+  existingScript?: string;
+};
+
+export default function ScriptGenerator({
+  projectId,
+  projectDescription,
+  onScriptGenerated,
+  existingScript = "",
+}: ScriptGeneratorProps) {
+  const [script, setScript] = useState(existingScript);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("generate");
+
+  const generateScript = async () => {
+    setIsGenerating(true);
+    try {
+      // Call your AI API to generate a script based on the project description
+      const response = await fetch("/api/generate/script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, description: projectDescription }),
+      });
+      
+      if (!response.ok) throw new Error("Failed to generate script");
+      
+      const data = await response.json();
+      setScript(data.script);
+      setActiveTab("edit");
+    } catch (error) {
+      console.error("Error generating script:", error);
+      // Handle error (show message to user)
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleSaveScript = () => {
+    // Save the script (edited or generated) to the project
+    onScriptGenerated(script);
+  };
+
+  return (
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle>Script Generation</CardTitle>
+        <CardDescription>
+          Generate a script for your reel or write your own
+        </CardDescription>
+      </CardHeader>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid grid-cols-2 mx-6">
+          <TabsTrigger value="generate">Generate Script</TabsTrigger>
+          <TabsTrigger value="edit">Edit Script</TabsTrigger>
+        </TabsList>
+        <CardContent>
+          <TabsContent value="generate" className="space-y-4">
+            <p className="text-sm text-gray-500">
+              Our AI will generate a script based on your project description. Click the button below to start.
+            </p>
+            <Button 
+              onClick={generateScript} 
+              disabled={isGenerating}
+              className="w-full"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Generating Script...
+                </>
+              ) : (
+                "Generate Script"
+              )}
+            </Button>
+          </TabsContent>
+          <TabsContent value="edit" className="space-y-4">
+            <Textarea
+              placeholder="Your script will appear here. You can edit it as needed."
+              rows={10}
+              value={script}
+              onChange={(e) => setScript(e.target.value)}
+              className="font-mono"
+            />
+          </TabsContent>
+        </CardContent>
+        <CardFooter>
+          <Button 
+            onClick={handleSaveScript} 
+            disabled={!script || isGenerating}
+            className="ml-auto"
+          >
+            Save Script & Continue
+          </Button>
+        </CardFooter>
+      </Tabs>
+    </Card>
+  );
+}
+
+================
+File: components/project/SubtitleEditor.tsx
+================
+// components/project/SubtitleEditor.tsx
+"use client";
+
+import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Loader2, RefreshCw } from "lucide-react";
+
+type Subtitle = {
+  id: string;
+  start: number;
+  end: number;
+  text: string;
+};
+
+type SubtitleEditorProps = {
+  projectId: string;
+  script: string;
+  audioUrl: string;
+  onSubtitlesGenerated: (subtitles: Subtitle[]) => void;
+  existingSubtitles?: Subtitle[];
+};
+
+export default function SubtitleEditor({
+  projectId,
+  script,
+  audioUrl,
+  onSubtitlesGenerated,
+  existingSubtitles = [],
+}: SubtitleEditorProps) {
+  const [subtitles, setSubtitles] = useState<Subtitle[]>(existingSubtitles);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [selectedSubtitle, setSelectedSubtitle] = useState<string | null>(null);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    // Create audio element for preview
+    if (audioUrl) {
+      const audio = new Audio(audioUrl);
+      setAudioElement(audio);
+      
+      return () => {
+        audio.pause();
+      };
+    }
+  }, [audioUrl]);
+
+  const generateSubtitles = async () => {
+    setIsGenerating(true);
+    try {
+      // In a real app, call your AI API to generate subtitles from script and audio
+      // For MVP, we'll simulate with a timeout and generate basic subtitles
+      
+      // Mock API call
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      // Create simulated subtitles by splitting script into sentences
+      const sentences = script
+        .replace(/([.!?])\s*(?=[A-Z])/g, "$1|")
+        .split("|")
+        .filter(s => s.trim().length > 0);
+      
+      const mockSubtitles: Subtitle[] = [];
+      let currentTime = 0;
+      
+      sentences.forEach((sentence, index) => {
+        // Estimate duration based on word count (approx 0.3s per word)
+        const wordCount = sentence.split(/\s+/).length;
+        const duration = Math.max(1, wordCount * 0.3);
+        
+        mockSubtitles.push({
+          id: `subtitle-${index}`,
+          start: currentTime,
+          end: currentTime + duration,
+          text: sentence.trim()
+        });
+        
+        currentTime += duration;
+      });
+      
+      setSubtitles(mockSubtitles);
+    } catch (error) {
+      console.error("Error generating subtitles:", error);
+      // Handle error
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const updateSubtitle = (id: string, field: keyof Subtitle, value: any) => {
+    setSubtitles(subtitles.map(sub => 
+      sub.id === id ? { ...sub, [field]: value } : sub
+    ));
+  };
+
+  const playSubtitleAudio = (subtitle: Subtitle) => {
+    if (!audioElement) return;
+    
+    audioElement.currentTime = subtitle.start;
+    audioElement.play();
+    
+    // Stop playing after subtitle duration
+    const duration = subtitle.end - subtitle.start;
+    setTimeout(() => {
+      audioElement.pause();
+    }, duration * 1000);
+  };
+
+  const handleSaveSubtitles = () => {
+    onSubtitlesGenerated(subtitles);
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    const ms = Math.floor((seconds % 1) * 100);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle>Subtitle Editor</CardTitle>
+        <CardDescription>
+          Generate and edit subtitles for your reel
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {subtitles.length === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-gray-500 mb-4">
+              No subtitles yet. Generate them automatically from your script and audio.
+            </p>
+            <Button 
+              onClick={generateSubtitles} 
+              disabled={isGenerating}
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Generating Subtitles...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Generate Subtitles
+                </>
+              )}
+            </Button>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-col max-h-96 overflow-y-auto border rounded-md">
+              {subtitles.map((subtitle) => (
+                <div 
+                  key={subtitle.id}
+                  className={`p-3 border-b cursor-pointer flex justify-between ${
+                    selectedSubtitle === subtitle.id ? 'bg-blue-50' : ''
+                  }`}
+                  onClick={() => setSelectedSubtitle(subtitle.id)}
+                >
+                  <div>
+                    <div className="text-sm font-medium">{subtitle.text}</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {formatTime(subtitle.start)} → {formatTime(subtitle.end)}
+                    </div>
+                  </div>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playSubtitleAudio(subtitle);
+                    }}
+                  >
+                    Play
+                  </Button>
+                </div>
+              ))}
+            </div>
+            
+            {selectedSubtitle && (
+              <div className="border rounded-md p-4 space-y-3">
+                <h3 className="text-sm font-medium">Edit Subtitle</h3>
+                
+                {subtitles.find(s => s.id === selectedSubtitle) && (
+                  <>
+                    <div className="flex space-x-4">
+                      <div className="w-1/2">
+                        <label className="text-xs font-medium">Start Time</label>
+                        <Input 
+                          type="number" 
+                          min="0" 
+                          step="0.1"
+                          value={subtitles.find(s => s.id === selectedSubtitle)?.start} 
+                          onChange={(e) => updateSubtitle(selectedSubtitle, 'start', parseFloat(e.target.value))}
+                        />
+                      </div>
+                      <div className="w-1/2">
+                        <label className="text-xs font-medium">End Time</label>
+                        <Input 
+                          type="number" 
+                          min="0" 
+                          step="0.1"
+                          value={subtitles.find(s => s.id === selectedSubtitle)?.end} 
+                          onChange={(e) => updateSubtitle(selectedSubtitle, 'end', parseFloat(e.target.value))}
+                        />
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <label className="text-xs font-medium">Text</label>
+                      <Textarea 
+                        value={subtitles.find(s => s.id === selectedSubtitle)?.text} 
+                        onChange={(e) => updateSubtitle(selectedSubtitle, 'text', e.target.value)}
+                        rows={2}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+      <CardFooter>
+        <Button 
+          onClick={handleSaveSubtitles} 
+          disabled={subtitles.length === 0 || isGenerating}
+          className="ml-auto"
+        >
+          Save Subtitles & Continue
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+================
+File: components/project/Timeline.tsx
+================
+// components/project/Timeline.tsx
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Slider } from "@/components/ui/slider";
+import { Play, Pause, Volume2, VolumeX, Download, CheckCircle } from "lucide-react";
+
+type Subtitle = {
+  id: string;
+  start: number;
+  end: number;
+  text: string;
+};
+
+type TimelineProps = {
+  projectId: string;
+  audioUrl: string;
+  mediaUrls: string[];
+  subtitles: Subtitle[];
+  onComplete: () => void;
+};
+
+export default function Timeline({
+  projectId,
+  audioUrl,
+  mediaUrls,
+  subtitles,
+  onComplete,
+}: TimelineProps) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+  const [activeSubtitle, setActiveSubtitle] = useState<Subtitle | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportComplete, setExportComplete] = useState(false);
+  
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  // Initialize audio and get duration
+  useEffect(() => {
+    if (audioUrl) {
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      
+      audio.onloadedmetadata = () => {
+        setDuration(audio.duration);
+      };
+      
+      audio.ontimeupdate = () => {
+        setCurrentTime(audio.currentTime);
+        
+        // Update active subtitle
+        const currentSubtitle = subtitles.find(
+          sub => audio.currentTime >= sub.start && audio.currentTime <= sub.end
+        ) || null;
+        
+        setActiveSubtitle(currentSubtitle);
+        
+        // Calculate which media clip should be shown
+        const clipDuration = audio.duration / mediaUrls.length;
+        const newMediaIndex = Math.min(
+          Math.floor(audio.currentTime / clipDuration),
+          mediaUrls.length - 1
+        );
+        
+        if (newMediaIndex !== activeMediaIndex) {
+          setActiveMediaIndex(newMediaIndex);
+        }
+      };
+      
+      return () => {
+        audio.pause();
+      };
+    }
+  }, [audioUrl, subtitles, mediaUrls.length]);
+
+  // Play/pause functionality
+  useEffect(() => {
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.play();
+      } else {
+        audioRef.current.pause();
+      }
+    }
+  }, [isPlaying]);
+
+  // Handle mute functionality
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.muted = isMuted;
+    }
+  }, [isMuted]);
+
+  const handlePlayPause = () => {
+    setIsPlaying(!isPlaying);
+  };
+
+  const handleTimeChange = (value: number[]) => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = value[0];
+      setCurrentTime(value[0]);
+    }
+  };
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    setExportProgress(0);
+    
+    // Simulate export process with progress updates
+    for (let i = 1; i <= 10; i++) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      setExportProgress(i * 10);
+    }
+    
+    setIsExporting(false);
+    setExportComplete(true);
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle>Timeline</CardTitle>
+        <CardDescription>
+          Preview and finalize your reel
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="aspect-video rounded-md overflow-hidden bg-black relative">
+          {/* Media display */}
+          <img 
+            src={mediaUrls[activeMediaIndex]} 
+            alt="Preview"
+            className="w-full h-full object-cover"
+          />
+          
+          {/* Subtitles overlay */}
+          {activeSubtitle && (
+            <div className="absolute bottom-8 left-0 right-0 text-center">
+              <div className="bg-black bg-opacity-50 text-white mx-auto max-w-md p-2 rounded text-lg font-medium">
+                {activeSubtitle.text}
+              </div>
+            </div>
+          )}
+          
+          {/* Play/pause overlay */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            {!isPlaying && (
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="h-16 w-16 rounded-full bg-black bg-opacity-30 text-white hover:bg-opacity-40"
+                onClick={handlePlayPause}
+              >
+                <Play className="h-8 w-8" />
+              </Button>
+            )}
+          </div>
+        </div>
+        
+        {/* Timeline controls */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={handlePlayPause}
+            >
+              {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+            </Button>
+            
+            <div className="flex-1">
+              <Slider
+                value={[currentTime]}
+                max={duration}
+                step={0.1}
+                onValueChange={handleTimeChange}
+              />
+            </div>
+            
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsMuted(!isMuted)}
+            >
+              {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+            </Button>
+            
+            <span className="text-sm font-mono">
+              {formatTime(currentTime)} / {formatTime(duration)}
+            </span>
+          </div>
+        </div>
+        
+        {/* Export controls */}
+        <div className="border rounded-md p-4">
+          <h3 className="text-sm font-medium mb-2">Export Your Reel</h3>
+          
+          {exportComplete ? (
+            <div className="flex items-center space-x-2 text-green-600">
+              <CheckCircle className="h-5 w-5" />
+              <span>Export complete! Your reel is ready to download or share.</span>
+            </div>
+          ) : isExporting ? (
+            <div className="space-y-2">
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div 
+                  className="bg-blue-600 h-2 rounded-full" 
+                  style={{ width: `${exportProgress}%` }}
+                ></div>
+              </div>
+              <p className="text-sm text-gray-500">Exporting reel: {exportProgress}% complete</p>
+            </div>
+          ) : (
+            <Button 
+              className="w-full"
+              onClick={handleExport}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Export Reel
+            </Button>
+          )}
+        </div>
+      </CardContent>
+      <CardFooter>
+        <Button 
+          onClick={onComplete}
+          disabled={isExporting && !exportComplete}
+          className="ml-auto"
+        >
+          {exportComplete ? "Finish & Return to Dashboard" : "Save & Finish"}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+================
+File: components/project/VoiceSelector.tsx
+================
+// components/project/VoiceSelector.tsx
+"use client";
+
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+import { Play, Pause, Loader2 } from "lucide-react";
+
+// Sample voice options - in a real app, these would come from your API
+const VOICE_OPTIONS = [
+  { id: "voice1", name: "Male - Professional", sample: "/samples/voice1.mp3" },
+  { id: "voice2", name: "Female - Enthusiastic", sample: "/samples/voice2.mp3" },
+  { id: "voice3", name: "Male - Casual", sample: "/samples/voice3.mp3" },
+  { id: "voice4", name: "Female - Professional", sample: "/samples/voice4.mp3" },
+];
+
+type VoiceSelectorProps = {
+  projectId: string;
+  script: string;
+  onVoiceGenerated: (voiceId: string, audioUrl: string) => void;
+};
+
+export default function VoiceSelector({
+  projectId,
+  script,
+  onVoiceGenerated,
+}: VoiceSelectorProps) {
+  const [selectedVoice, setSelectedVoice] = useState<string>("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const [audioRef, setAudioRef] = useState<HTMLAudioElement | null>(null);
+
+  const handlePlaySample = (voiceId: string, sampleUrl: string) => {
+    if (playingVoice === voiceId && audioRef) {
+      audioRef.pause();
+      setPlayingVoice(null);
+    } else {
+      if (audioRef) {
+        audioRef.pause();
+      }
+      
+      const audio = new Audio(sampleUrl);
+      audio.onended = () => setPlayingVoice(null);
+      audio.play();
+      
+      setAudioRef(audio);
+      setPlayingVoice(voiceId);
+    }
+  };
+
+  const generateVoiceover = async () => {
+    if (!selectedVoice || !script) return;
+
+    setIsGenerating(true);
+    try {
+      // Call your AI API to generate audio from the script with the selected voice
+      const response = await fetch("/api/generate/audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          projectId, 
+          script, 
+          voiceId: selectedVoice 
+        }),
+      });
+      
+      if (!response.ok) throw new Error("Failed to generate voiceover");
+      
+      const data = await response.json();
+      onVoiceGenerated(selectedVoice, data.audioUrl);
+    } catch (error) {
+      console.error("Error generating voiceover:", error);
+      // Handle error
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  return (
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle>Select Voice</CardTitle>
+        <CardDescription>
+          Choose a voice for your voiceover
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <RadioGroup 
+          value={selectedVoice} 
+          onValueChange={setSelectedVoice}
+          className="space-y-4"
+        >
+          {VOICE_OPTIONS.map((voice) => (
+            <div key={voice.id} className="flex items-center justify-between border p-4 rounded-md">
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value={voice.id} id={voice.id} />
+                <Label htmlFor={voice.id} className="cursor-pointer">{voice.name}</Label>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() => handlePlaySample(voice.id, voice.sample)}
+              >
+                {playingVoice === voice.id ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                {playingVoice === voice.id ? "Pause" : "Play Sample"}
+              </Button>
+            </div>
+          ))}
+        </RadioGroup>
+      </CardContent>
+      <CardFooter>
+        <Button 
+          onClick={generateVoiceover} 
+          disabled={!selectedVoice || isGenerating}
+          className="ml-auto"
+        >
+          {isGenerating ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Generating Voiceover...
+            </>
+          ) : (
+            "Generate Voiceover"
+          )}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+================
+File: components/ui/button.tsx
+================
+import * as React from "react"
+import { Slot } from "@radix-ui/react-slot"
+import { cva, type VariantProps } from "class-variance-authority"
+
+import { cn } from "@/lib/utils"
+
+const buttonVariants = cva(
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[color,box-shadow] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+  {
+    variants: {
+      variant: {
+        default:
+          "bg-primary text-primary-foreground shadow-xs hover:bg-primary/90",
+        destructive:
+          "bg-destructive text-white shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40",
+        outline:
+          "border border-input bg-background shadow-xs hover:bg-accent hover:text-accent-foreground",
+        secondary:
+          "bg-secondary text-secondary-foreground shadow-xs hover:bg-secondary/80",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-9 px-4 py-2 has-[>svg]:px-3",
+        sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
+        lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
+        icon: "size-9",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  }
+)
+
+function Button({
+  className,
+  variant,
+  size,
+  asChild = false,
+  ...props
+}: React.ComponentProps<"button"> &
+  VariantProps<typeof buttonVariants> & {
+    asChild?: boolean
+  }) {
+  const Comp = asChild ? Slot : "button"
+
+  return (
+    <Comp
+      data-slot="button"
+      className={cn(buttonVariants({ variant, size, className }))}
+      {...props}
+    />
+  )
+}
+
+export { Button, buttonVariants }
+
+================
+File: components/ui/card.tsx
+================
+import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+function Card({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card"
+      className={cn(
+        "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-header"
+      className={cn("flex flex-col gap-1.5 px-6", className)}
+      {...props}
+    />
+  )
+}
+
+function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-title"
+      className={cn("leading-none font-semibold", className)}
+      {...props}
+    />
+  )
+}
+
+function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-description"
+      className={cn("text-muted-foreground text-sm", className)}
+      {...props}
+    />
+  )
+}
+
+function CardContent({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-content"
+      className={cn("px-6", className)}
+      {...props}
+    />
+  )
+}
+
+function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="card-footer"
+      className={cn("flex items-center px-6", className)}
+      {...props}
+    />
+  )
+}
+
+export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent }
+
+================
+File: components/ui/input.tsx
+================
+import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+function Input({ className, type, ...props }: React.ComponentProps<"input">) {
+  return (
+    <input
+      type={type}
+      data-slot="input"
+      className={cn(
+        "border-input file:text-foreground placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
+        "focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
+        "aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+export { Input }
+
+================
+File: components/ui/label.tsx
+================
+"use client"
+
+import * as React from "react"
+import * as LabelPrimitive from "@radix-ui/react-label"
+
+import { cn } from "@/lib/utils"
+
+function Label({
+  className,
+  ...props
+}: React.ComponentProps<typeof LabelPrimitive.Root>) {
+  return (
+    <LabelPrimitive.Root
+      data-slot="label"
+      className={cn(
+        "flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+export { Label }
+
+================
+File: components/ui/radio-group.tsx
+================
+"use client"
+
+import * as React from "react"
+import * as RadioGroupPrimitive from "@radix-ui/react-radio-group"
+import { CircleIcon } from "lucide-react"
+
+import { cn } from "@/lib/utils"
+
+function RadioGroup({
+  className,
+  ...props
+}: React.ComponentProps<typeof RadioGroupPrimitive.Root>) {
+  return (
+    <RadioGroupPrimitive.Root
+      data-slot="radio-group"
+      className={cn("grid gap-3", className)}
+      {...props}
+    />
+  )
+}
+
+function RadioGroupItem({
+  className,
+  ...props
+}: React.ComponentProps<typeof RadioGroupPrimitive.Item>) {
+  return (
+    <RadioGroupPrimitive.Item
+      data-slot="radio-group-item"
+      className={cn(
+        "border-input text-primary focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive aspect-square size-4 shrink-0 rounded-full border shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
+        className
+      )}
+      {...props}
+    >
+      <RadioGroupPrimitive.Indicator
+        data-slot="radio-group-indicator"
+        className="relative flex items-center justify-center"
+      >
+        <CircleIcon className="fill-primary absolute top-1/2 left-1/2 size-2 -translate-x-1/2 -translate-y-1/2" />
+      </RadioGroupPrimitive.Indicator>
+    </RadioGroupPrimitive.Item>
+  )
+}
+
+export { RadioGroup, RadioGroupItem }
+
+================
+File: components/ui/slider.tsx
+================
+"use client"
+
+import * as React from "react"
+import * as SliderPrimitive from "@radix-ui/react-slider"
+
+import { cn } from "@/lib/utils"
+
+function Slider({
+  className,
+  defaultValue,
+  value,
+  min = 0,
+  max = 100,
+  ...props
+}: React.ComponentProps<typeof SliderPrimitive.Root>) {
+  const _values = React.useMemo(
+    () =>
+      Array.isArray(value)
+        ? value
+        : Array.isArray(defaultValue)
+          ? defaultValue
+          : [min, max],
+    [value, defaultValue, min, max]
+  )
+
+  return (
+    <SliderPrimitive.Root
+      data-slot="slider"
+      defaultValue={defaultValue}
+      value={value}
+      min={min}
+      max={max}
+      className={cn(
+        "relative flex w-full touch-none items-center select-none data-[disabled]:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-44 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col",
+        className
+      )}
+      {...props}
+    >
+      <SliderPrimitive.Track
+        data-slot="slider-track"
+        className={cn(
+          "bg-muted relative grow overflow-hidden rounded-full data-[orientation=horizontal]:h-1.5 data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-1.5"
+        )}
+      >
+        <SliderPrimitive.Range
+          data-slot="slider-range"
+          className={cn(
+            "bg-primary absolute data-[orientation=horizontal]:h-full data-[orientation=vertical]:w-full"
+          )}
+        />
+      </SliderPrimitive.Track>
+      {Array.from({ length: _values.length }, (_, index) => (
+        <SliderPrimitive.Thumb
+          data-slot="slider-thumb"
+          key={index}
+          className="border-primary bg-background ring-ring/50 block size-4 shrink-0 rounded-full border shadow-sm transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
+        />
+      ))}
+    </SliderPrimitive.Root>
+  )
+}
+
+export { Slider }
+
+================
+File: components/ui/tabs.tsx
+================
+"use client"
+
+import * as React from "react"
+import * as TabsPrimitive from "@radix-ui/react-tabs"
+
+import { cn } from "@/lib/utils"
+
+function Tabs({
+  className,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Root>) {
+  return (
+    <TabsPrimitive.Root
+      data-slot="tabs"
+      className={cn("flex flex-col gap-2", className)}
+      {...props}
+    />
+  )
+}
+
+function TabsList({
+  className,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.List>) {
+  return (
+    <TabsPrimitive.List
+      data-slot="tabs-list"
+      className={cn(
+        "bg-muted text-muted-foreground inline-flex h-9 w-fit items-center justify-center rounded-lg p-1",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function TabsTrigger({
+  className,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+  return (
+    <TabsPrimitive.Trigger
+      data-slot="tabs-trigger"
+      className={cn(
+        "data-[state=active]:bg-background data-[state=active]:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring inline-flex items-center justify-center gap-2 rounded-md px-2 py-1 text-sm font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:ring-[3px] focus-visible:outline-1 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:shadow-sm [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function TabsContent({
+  className,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Content>) {
+  return (
+    <TabsPrimitive.Content
+      data-slot="tabs-content"
+      className={cn("flex-1 outline-none", className)}
+      {...props}
+    />
+  )
+}
+
+export { Tabs, TabsList, TabsTrigger, TabsContent }
+
+================
+File: components/ui/textarea.tsx
+================
+import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
+  return (
+    <textarea
+      data-slot="textarea"
+      className={cn(
+        "border-input placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive flex field-sizing-content min-h-16 w-full rounded-md border bg-transparent px-3 py-2 text-base shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+export { Textarea }
+
+================
+File: lib/supabase/client.ts
+================
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
+const supabaseServiceKey = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY as string;
+
+// Client with service role for server operations
+export const supabaseAdmin = createClient(
+  supabaseUrl,
+  supabaseServiceKey,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    }
+  }
+);
+
+// Client for client-side operations
+export const supabaseClient = createClient(
+  supabaseUrl,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string
+);
+
+================
+File: lib/ai_image_fal.ts
+================
+import { fal } from "@fal-ai/client";
+
+export async function generateImageFal(prompt: string, width = 720, height = 1080) {
+    const result = await fal.subscribe("fal-ai/recraft-20b", {
+        input: {
+            prompt,
+            "image_size": {
+                "width": width,
+                "height": height
+            },
+        },
+        logs: true,
+        onQueueUpdate: (update) => {
+            if (update.status === "IN_PROGRESS") {
+                update.logs.map((log) => log.message).forEach(console.log);
+            }
+        },
+    });
+    
+    return {
+        imageUrl: result.data.images[0].url,
+        requestId: result.requestId
+    };
+}
+
+================
+File: lib/ai_image_pollinations.ts
+================
+export type ImageGenerationOptions = {
+  width?: number;
+  height?: number;
+  model?: string;
+  seed?: number;
+};
+
+export interface GeneratedImage {
+  prompt: string;
+  filename: string | null;
+  url: string | null;
+  duration: number | null;
+  error?: string;
+}
+
+export async function generateImage(
+  prompt: string,
+  options: ImageGenerationOptions = {}
+): Promise<Buffer> {
+  const {
+    width = 1024,
+    height = 1024,
+    model = 'flux',
+    seed = Math.floor(Math.random() * 1000000)
+  } = options;
+
+  const imageUrl = `https://pollinations.ai/p/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&model=${model}`;
+  
+  const response = await fetch(imageUrl);
+  console.log(response);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch image for prompt: ${prompt}`);
+  }
+  
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+================
+File: lib/ai_script_gemini.ts
+================
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
+type Scene = {
+  description: string;
+  duration: number;
+};
+
+type ScriptResponse = {
+  script: string;
+  scenes: Scene[];
+};
+
+const schema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    scenes: {
+      type: SchemaType.ARRAY,
+      description: "List of scenes with descriptions and durations",
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          description: {
+            type: SchemaType.STRING,
+            description: "Detailed description of the scene for image generation",
+            nullable: false,
+          },
+          duration: {
+            type: SchemaType.NUMBER,
+            description: "Duration of the scene in seconds",
+            nullable: false,
+          },
+        },
+        required: ["description", "duration"],
+      },
+    },
+    script: {
+      type: SchemaType.STRING,
+      description: "The generated script for the video with emojis",
+      nullable: false,
+    },
+  },
+  required: ["script", "scenes"],
+};
+
+export async function generateScript(prompt: string): Promise<ScriptResponse> {
+  try {
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.0-flash",
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: schema,
+      },
+    });
+    
+    const result = await model.generateContent(`
+      Generate a short-form video script based on the following description.
+      
+      Follow these rules:
+      - Length: 30-60 seconds total
+      - Tone: Engaging and conversational
+      - Structure: Hook -> Content -> Call to action
+      - Include emojis where appropriate
+      - Break down into 3-5 scenes
+      - Each scene should have a specific duration
+      
+      IMPORTANT - For scene descriptions:
+      - First establish the setting, characters, and their key attributes
+      - Each subsequent scene should explicitly reference elements from previous scenes
+      - Maintain visual consistency for characters (same appearance, clothing, colors)
+      - Explicitly carry over the setting/environment details between scenes
+      - Each description should be self-contained but also build on the previous scene
+      - Use precise, detailed language optimized for text-to-image generation
+      - Include specific details about lighting, camera angle, and mood
+      - When characters move or change position, explain their transition from the previous scene
+      
+      Description: ${prompt}
+    `);
+
+    const response = await result.response;
+    const parsedResponse = JSON.parse(response.text());
+    
+    // Return the response with the correct structure
+    return {
+      script: parsedResponse.script,
+      scenes: parsedResponse.scenes,
+    };
+  } catch (error) {
+    console.error("Gemini API Error:", error);
+    throw new Error("Failed to generate script");
+  }
+}
+
+================
+File: lib/ai_voice.ts
+================
+import { createClient } from "@deepgram/sdk";
+import fs from "fs";
+
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY!);
+
+type AudioConfig = {
+  model?: string;
+  encoding?: string;
+  container?: string;
+};
+
+export async function generateAudio(text: string, outputPath: string, config?: AudioConfig) {
+  try {
+    // Make request with provided config or defaults
+    const response = await deepgram.speak.request(
+      { text },
+      {
+        model: config?.model || "aura-asteria-en",
+        encoding: config?.encoding || "linear16",
+        container: config?.container || "wav",
+      }
+    );
+
+    // Get stream and headersz
+    const stream = await response.getStream();
+    const headers = await response.getHeaders();
+
+    if (!stream) {
+      throw new Error("Failed to generate audio stream");
+    }
+
+    // Convert stream to buffer
+    const buffer = await getAudioBuffer(stream);
+
+    // Write to file
+    await fs.promises.writeFile(outputPath, buffer);
+
+    return {
+      success: true,
+      path: outputPath,
+      headers,
+    };
+  } catch (error) {
+    console.error("Error generating audio:", error);
+    throw error;
+  }
+}
+
+async function getAudioBuffer(response: ReadableStream): Promise<Buffer> {
+  const reader = response.getReader();
+  const chunks: Uint8Array[] = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+
+  const dataArray = chunks.reduce(
+    (acc, chunk) => Uint8Array.from([...acc, ...chunk]),
+    new Uint8Array(0)
+  );
+
+  return Buffer.from(dataArray.buffer);
+}
+
+export async function getWordTimestamps(audioFilePath: string) {
+  try {
+    console.log(`Reading audio file for timestamps from: ${audioFilePath}`);
+
+    // Check if file exists first
+    if (!fs.existsSync(audioFilePath)) {
+      throw new Error(`Audio file not found at path: ${audioFilePath}`);
+    }
+
+    const audioBuffer = fs.readFileSync(audioFilePath);
+    console.log(`Audio file size: ${audioBuffer.length} bytes`);
+
+    const { result } = await deepgram.listen.prerecorded.transcribeFile(audioBuffer, {
+      model: "nova-2",
+      smart_format: true,
+    });
+
+    if (result) {
+      return result.results.channels[0].alternatives[0].words;
+    } else {
+      throw Error("transcription result is null");
+    }
+  } catch (error) {
+    console.error(`Error generating word timestamps: ${error}`);
+    // Return a fallback empty result to prevent the entire process from failing
+    return {
+      utterances: [],
+      words: [],
+      error: `Failed to generate timestamps: ${error.message || error}`
+    };
+  }
+}
+
+================
+File: lib/fal_image_to_video.ts
+================
+import { fal } from "@fal-ai/client";
+import path from "path";
+import fs from "fs/promises";
+
+type VideoResult = {
+  videoUrl: string;
+  requestId: string;
+};
+
+export async function convertImageToVideo(
+  imageUrl: string,
+  prompt: string
+): Promise<VideoResult> {
+  try {
+    // Handle local API URLs by reading directly from the gen_media directory
+    if (imageUrl.includes('/api/media/images/')) {
+      // Extract filename from URL
+      const filename = imageUrl.split('/').pop();
+      if (!filename) {
+        throw new Error("Invalid image URL format");
+      }
+
+      // Read the file from gen_media/images
+      const imagePath = path.join(process.cwd(), 'gen_media', 'images', filename);
+      const imageBuffer = await fs.readFile(imagePath);
+      
+      // Create a File object from the buffer
+      const file = new File([imageBuffer], filename, { type: 'image/png' });
+      
+      // Upload to FAL storage
+      const uploadedUrl = await fal.storage.upload(file);
+      imageUrl = uploadedUrl; // Use the uploaded URL for video generation
+    }
+
+    const result = await fal.subscribe("fal-ai/kling-video/v1.6/pro/image-to-video", {
+      input: {
+        prompt,
+        image_url: imageUrl
+      },
+      logs: true,
+      onQueueUpdate: (update) => {
+        if (update.status === "IN_PROGRESS") {
+          console.log("Processing video:", update.logs.map(log => log.message));
+        }
+      },
+    });
+
+    if (!result.data?.video?.url) {
+      throw new Error("No video URL in response");
+    }
+
+    return {
+      videoUrl: result.data.video.url,
+      requestId: result.requestId
+    };
+  } catch (error) {
+    console.error("Error in image to video conversion:", error);
+    throw error;
+  }
+}
+
+================
+File: lib/project-helpers.ts
+================
+import { Project } from '@/types/project';
+
+export async function createProject(title: string, description: string, userId: string) {
+  try {
+    const response = await fetch(`/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description, userId }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to create project');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error creating project:', error);
+    throw error;
+  }
+}
+
+export async function startProjectGeneration(projectId: string) {
+  try {
+    const response = await fetch(`/api/projects/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to start project generation');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error starting project generation:', error);
+    throw error;
+  }
+}
+
+export async function getProject(id: string): Promise<Project> {
+  try {
+    const response = await fetch(`/api/projects/${id}`);
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch project');
+    }
+
+    const data = await response.json();
+    return data.project;
+  } catch (error) {
+    console.error('Error fetching project:', error);
+    throw error;
+  }
+}
+
+export async function getUserProjects(userId: string): Promise<Project[]> {
+  try {
+    const response = await fetch(`/api/projects?userId=${userId}`);
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch projects');
+    }
+
+    const data = await response.json();
+    return data.projects;
+  } catch (error) {
+    console.error('Error fetching user projects:', error);
+    throw error;
+  }
+}
+
+export async function updateProject(project: Partial<Project> & { id: string }) {
+  try {
+    const response = await fetch(`/api/projects`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(project),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to update project');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error updating project:', error);
+    throw error;
+  }
+}
+
+export async function deleteProject(id: string) {
+  try {
+    const response = await fetch(`/api/projects?id=${id}`, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to delete project');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error deleting project:', error);
+    throw error;
+  }
+}
+
+================
+File: lib/project-service.ts
+================
+import { supabaseAdmin } from './supabase/client';
+import { Project, Scene } from '@/types/project';
+import { getWordTimestamps } from './ai_voice';
+import fs from 'fs';
+import path from 'path';
+
+export async function generateFullProject(projectId: string): Promise<Project> {
+  try {
+    // 1. Get project from database
+    const { data: project, error } = await supabaseAdmin
+      .from('projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
+
+    if (error || !project) {
+      throw new Error(`Project not found: ${error?.message}`);
+    }
+
+    // 2. Update project status to generating
+    await updateProjectStatus(projectId, 'generating');
+
+    // 3. Generate script
+    const scriptResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/generate/script`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        description: project.description,
+        projectId: project.id
+      }),
+    });
+
+    if (!scriptResponse.ok) {
+      throw new Error('Failed to generate script');
+    }
+    
+    const scriptResult = await scriptResponse.json();
+    const { script, scenes } = scriptResult;
+    
+    // 4. Update project with script
+    await supabaseAdmin
+      .from('projects')
+      .update({ script })
+      .eq('id', projectId);
+    
+    // 5. Generate images for each scene
+    const imageResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/generate/image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        script,
+        scenes,
+        projectId
+      }),
+    });
+
+    if (!imageResponse.ok) {
+      throw new Error('Failed to generate images');
+    }
+
+    const imageResult = await imageResponse.json();
+    const scenesWithImages = imageResult.media.map((media: any, index: number) => ({
+      description: scenes[index].description,
+      duration: scenes[index].duration || 5,
+      imageUrl: media.url,
+      order: index
+    }));
+
+    // 6. Generate video for each image
+    const scenesWithVideos = await Promise.all(
+      scenesWithImages.map(async (scene: Scene) => {
+        // const videoResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/generate/video`, {
+        //   method: 'POST',
+        //   headers: { 'Content-Type': 'application/json' },
+        //   body: JSON.stringify({
+        //     imageUrl: scene.imageUrl,
+        //     prompt: scene.description,
+        //     projectId
+        //   }),
+        // });
+
+        // if (!videoResponse.ok) {
+        //   console.error('Failed to generate video for scene', scene);
+        //   return scene;
+        // }
+
+        // const videoResult = await videoResponse.json();
+        // return { ...scene, videoUrl: videoResult.videoUrl };
+        // For now, just return the scene with a mock video URL
+        // Mock a video URL using the image URL but with a different extension
+        const imageUrlParts = scene.imageUrl.split('.');
+        const baseUrl = imageUrlParts.join('.');
+        const mockVideoUrl = `${baseUrl}_video.mp4`;
+
+        console.log(`[MOCK] Video would be generated for ${scene.description}`);
+        return { ...scene, videoUrl: mockVideoUrl };
+      })
+    );
+
+    // 7. Generate audio for the narration
+    const audioResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/generate/audio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: script,
+        config: { voice: 'en-US-Neural2-F' }
+      }),
+    });
+
+    if (!audioResponse.ok) {
+      throw new Error('Failed to generate audio');
+    }
+
+    const audioResult = await audioResponse.json();
+    
+    // 8. Generate word timestamps from the audio
+    console.log(`Processing audio from: ${audioResult.audioUrl}`);
+    const audioFilePath = await downloadAudio(audioResult.audioUrl, projectId);
+    console.log(`Audio file path for timestamp generation: ${audioFilePath}`);
+    
+    // Ensure the transcripts directory exists
+    const transcriptsDir = path.join(process.cwd(), 'gen_media', 'transcripts');
+    await fs.promises.mkdir(transcriptsDir, { recursive: true });
+
+    // Generate timestamps and save to file
+    const timestamps = await getWordTimestamps(audioFilePath);
+    const transcriptFilePath = path.join(transcriptsDir, `${projectId}.json`);
+    await fs.promises.writeFile(transcriptFilePath, JSON.stringify(timestamps, null, 2));
+    
+    // Create a URL for the transcript file
+    const transcriptUrl = `/api/media/transcripts/${projectId}.json`;
+    console.log(transcriptUrl);
+    
+    // Add transcript URL AND audio URL to each scene
+    const scenesWithTranscripts = scenesWithVideos.map(scene => ({
+      ...scene,
+      transcriptUrl,
+      audioUrl: audioResult.audioUrl // Add the audio URL to each scene
+    }));
+    console.log(scenesWithTranscripts);
+
+    // 9. Update project with generated assets
+    const updatedProject: Project = {
+      ...project,
+      status: 'completed',
+      script,
+      scenes: scenesWithTranscripts
+      // No longer maintaining audioUrl at the project level
+    };
+    console.log(updatedProject);
+
+    const { error: updateError } = await supabaseAdmin
+      .from('projects')
+      .update({
+        status: 'completed',
+        script,
+        scenes: scenesWithTranscripts
+        // Removed audioUrl from project update
+      })
+      .eq('id', projectId);
+    
+    if (updateError) {
+      console.error('Error updating project in database:', updateError);
+      throw new Error(`Failed to update project: ${updateError.message}`);
+    }
+
+    return updatedProject;
+  } catch (error) {
+    console.error('Error generating project:', error);
+    await updateProjectStatus(projectId, 'failed');
+    throw error;
+  }
+}
+
+// Helper function to download audio file if it's a URL
+async function downloadAudio(audioUrl: string, projectId: string): Promise<string> {
+  try {
+    // Check if it's an API URL (starts with /api/) and convert to filesystem path
+    if (audioUrl.startsWith('/api/media/')) {
+      // Map from API URL to actual file path
+      const relativePath = audioUrl.replace('/api/media/', '');
+      const absolutePath = path.join(process.cwd(), 'gen_media', relativePath);
+      
+      // Check if the file exists
+      if (fs.existsSync(absolutePath)) {
+        console.log(`Using existing audio file at: ${absolutePath}`);
+        return absolutePath;
+      }
+      console.warn(`Audio file not found at: ${absolutePath}, attempting to download from full URL`);
+    }
+
+    // If it's an external URL or file wasn't found locally
+    const fullUrl = audioUrl.startsWith('http') 
+      ? audioUrl 
+      : `${process.env.NEXT_PUBLIC_BASE_URL}${audioUrl}`;
+    
+    console.log(`Downloading audio from: ${fullUrl}`);
+    const response = await fetch(fullUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to download audio. Status: ${response.status}`);
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    
+    // Save to a predictable location using project ID
+    const outputPath = path.join(process.cwd(), 'gen_media', 'audio', `${projectId}.wav`);
+    await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.promises.writeFile(outputPath, buffer);
+    
+    console.log(`Audio downloaded and saved to: ${outputPath}`);
+    return outputPath;
+  } catch (error) {
+    console.error(`Error downloading audio: ${error}`);
+    throw error;
+  }
+}
+
+async function updateProjectStatus(projectId: string, status: 'draft' | 'generating' | 'completed' | 'failed') {
+  await supabaseAdmin
+    .from('projects')
+    .update({ status })
+    .eq('id', projectId);
+}
+
+================
+File: lib/utils.ts
+================
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
+
+/**
+ * Downloads an image from a URL and returns it as a buffer
+ */
+export async function downloadImage(url: string): Promise<Buffer> {
+  const response = await fetch(url);
+  
+  if (!response.ok) {
+    throw new Error(`Failed to download image from ${url}, status: ${response.status}`);
+  }
+  
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+================
+File: public/file.svg
+================
+<svg fill="none" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M14.5 13.5V5.41a1 1 0 0 0-.3-.7L9.8.29A1 1 0 0 0 9.08 0H1.5v13.5A2.5 2.5 0 0 0 4 16h8a2.5 2.5 0 0 0 2.5-2.5m-1.5 0v-7H8v-5H3v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1M9.5 5V2.12L12.38 5zM5.13 5h-.62v1.25h2.12V5zm-.62 3h7.12v1.25H4.5zm.62 3h-.62v1.25h7.12V11z" clip-rule="evenodd" fill="#666" fill-rule="evenodd"/></svg>
+
+================
+File: public/globe.svg
+================
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><g clip-path="url(#a)"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.27 14.1a6.5 6.5 0 0 0 3.67-3.45q-1.24.21-2.7.34-.31 1.83-.97 3.1M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m.48-1.52a7 7 0 0 1-.96 0H7.5a4 4 0 0 1-.84-1.32q-.38-.89-.63-2.08a40 40 0 0 0 3.92 0q-.25 1.2-.63 2.08a4 4 0 0 1-.84 1.31zm2.94-4.76q1.66-.15 2.95-.43a7 7 0 0 0 0-2.58q-1.3-.27-2.95-.43a18 18 0 0 1 0 3.44m-1.27-3.54a17 17 0 0 1 0 3.64 39 39 0 0 1-4.3 0 17 17 0 0 1 0-3.64 39 39 0 0 1 4.3 0m1.1-1.17q1.45.13 2.69.34a6.5 6.5 0 0 0-3.67-3.44q.65 1.26.98 3.1M8.48 1.5l.01.02q.41.37.84 1.31.38.89.63 2.08a40 40 0 0 0-3.92 0q.25-1.2.63-2.08a4 4 0 0 1 .85-1.32 7 7 0 0 1 .96 0m-2.75.4a6.5 6.5 0 0 0-3.67 3.44 29 29 0 0 1 2.7-.34q.31-1.83.97-3.1M4.58 6.28q-1.66.16-2.95.43a7 7 0 0 0 0 2.58q1.3.27 2.95.43a18 18 0 0 1 0-3.44m.17 4.71q-1.45-.12-2.69-.34a6.5 6.5 0 0 0 3.67 3.44q-.65-1.27-.98-3.1" fill="#666"/></g><defs><clipPath id="a"><path fill="#fff" d="M0 0h16v16H0z"/></clipPath></defs></svg>
+
+================
+File: public/next.svg
+================
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 394 80"><path fill="#000" d="M262 0h68.5v12.7h-27.2v66.6h-13.6V12.7H262V0ZM149 0v12.7H94v20.4h44.3v12.6H94v21h55v12.6H80.5V0h68.7zm34.3 0h-17.8l63.8 79.4h17.9l-32-39.7 32-39.6h-17.9l-23 28.6-23-28.6zm18.3 56.7-9-11-27.1 33.7h17.8l18.3-22.7z"/><path fill="#000" d="M81 79.3 17 0H0v79.3h13.6V17l50.2 62.3H81Zm252.6-.4c-1 0-1.8-.4-2.5-1s-1.1-1.6-1.1-2.6.3-1.8 1-2.5 1.6-1 2.6-1 1.8.3 2.5 1a3.4 3.4 0 0 1 .6 4.3 3.7 3.7 0 0 1-3 1.8zm23.2-33.5h6v23.3c0 2.1-.4 4-1.3 5.5a9.1 9.1 0 0 1-3.8 3.5c-1.6.8-3.5 1.3-5.7 1.3-2 0-3.7-.4-5.3-1s-2.8-1.8-3.7-3.2c-.9-1.3-1.4-3-1.4-5h6c.1.8.3 1.6.7 2.2s1 1.2 1.6 1.5c.7.4 1.5.5 2.4.5 1 0 1.8-.2 2.4-.6a4 4 0 0 0 1.6-1.8c.3-.8.5-1.8.5-3V45.5zm30.9 9.1a4.4 4.4 0 0 0-2-3.3 7.5 7.5 0 0 0-4.3-1.1c-1.3 0-2.4.2-3.3.5-.9.4-1.6 1-2 1.6a3.5 3.5 0 0 0-.3 4c.3.5.7.9 1.3 1.2l1.8 1 2 .5 3.2.8c1.3.3 2.5.7 3.7 1.2a13 13 0 0 1 3.2 1.8 8.1 8.1 0 0 1 3 6.5c0 2-.5 3.7-1.5 5.1a10 10 0 0 1-4.4 3.5c-1.8.8-4.1 1.2-6.8 1.2-2.6 0-4.9-.4-6.8-1.2-2-.8-3.4-2-4.5-3.5a10 10 0 0 1-1.7-5.6h6a5 5 0 0 0 3.5 4.6c1 .4 2.2.6 3.4.6 1.3 0 2.5-.2 3.5-.6 1-.4 1.8-1 2.4-1.7a4 4 0 0 0 .8-2.4c0-.9-.2-1.6-.7-2.2a11 11 0 0 0-2.1-1.4l-3.2-1-3.8-1c-2.8-.7-5-1.7-6.6-3.2a7.2 7.2 0 0 1-2.4-5.7 8 8 0 0 1 1.7-5 10 10 0 0 1 4.3-3.5c2-.8 4-1.2 6.4-1.2 2.3 0 4.4.4 6.2 1.2 1.8.8 3.2 2 4.3 3.4 1 1.4 1.5 3 1.5 5h-5.8z"/></svg>
+
+================
+File: public/vercel.svg
+================
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1155 1000"><path d="m577.3 0 577.4 1000H0z" fill="#fff"/></svg>
+
+================
+File: public/window.svg
+================
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 2.5h13v10a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1zM0 1h16v11.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 0 12.5zm3.75 4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5M7 4.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0m1.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5" fill="#666"/></svg>
+
+================
+File: supabase/.branches/_current_branch
+================
+main
+
+================
+File: supabase/.temp/cli-latest
+================
+v2.15.8
+
+================
+File: supabase/migrations/20240101000000_create_projects_table.sql
+================
+-- Create projects table
+CREATE TABLE IF NOT EXISTS projects (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  user_id TEXT NOT NULL,
+  script TEXT,
+  scenes JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Add indexes
+CREATE INDEX IF NOT EXISTS projects_user_id_idx ON projects (user_id);
+CREATE INDEX IF NOT EXISTS projects_status_idx ON projects (status);
+
+-- RLS policies
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view their own projects" 
+  ON projects FOR SELECT 
+  USING (auth.uid()::text = user_id);
+
+CREATE POLICY "Users can insert their own projects" 
+  ON projects FOR INSERT 
+  WITH CHECK (auth.uid()::text = user_id);
+
+CREATE POLICY "Users can update their own projects" 
+  ON projects FOR UPDATE 
+  USING (auth.uid()::text = user_id);
+
+CREATE POLICY "Users can delete their own projects" 
+  ON projects FOR DELETE 
+  USING (auth.uid()::text = user_id);
+
+-- Function to automatically set updated_at on update
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to call the function
+CREATE TRIGGER update_projects_updated_at
+BEFORE UPDATE ON projects
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column();
+
+================
+File: supabase/seed.sql
+================
+-- Seed data for projects table
+INSERT INTO projects (id, title, description, status, user_id) VALUES
+(
+  '33333333-3333-3333-3333-333333333333',
+  'Summer Adventure',
+  'A fun family comedy about a road trip gone wrong',
+  'draft',
+  'test-user-id'
+);
+
+================
+File: types/project.ts
+================
+export interface Scene {
+  id?: string;
+  description: string;
+  duration?: number;
+  imageUrl?: string;
+  videoUrl?: string;
+  audioUrl?: string;
+  transcriptUrl?: string;  // Added transcriptUrl property
+  order: number;
+}
+
+export interface Project {
+  id?: string;
+  title: string;
+  description: string;
+  status: 'draft' | 'generating' | 'completed' | 'failed';
+  userId: string;
+  createdAt?: string;
+  updatedAt?: string;
+  script?: string;
+  scenes?: Scene[];
+}
+
+export interface ProjectCreateRequest {
+  title: string;
+  description: string;
+}
+
+export interface ProjectUpdateRequest {
+  id: string;
+  title?: string;
+  description?: string;
+  status?: 'draft' | 'generating' | 'completed' | 'failed';
+  script?: string;
+  scenes?: Scene[];
+}
+
+================
+File: .gitignore
+================
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+#audio
+/gen_media
+
+================
+File: components.json
+================
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "app/globals.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "aliases": {
+    "components": "@/components",
+    "utils": "@/lib/utils",
+    "ui": "@/components/ui",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  },
+  "iconLibrary": "lucide"
+}
+
+================
+File: context.md
+================
+Below is a **comprehensive App Workflow Document** based on the information you provided, along with some reasonable assumptions and suggestions to fill in any gaps. This document focuses **exclusively on user workflows** and does not address technology stack or implementation details.
+
+---
+
+## 1. Title
+
+**“AI-Powered Reel Maker: App Workflow Document”**
+
+---
+
+## 2. Overview of the App Workflow
+
+**Purpose**  
+The application enables users to quickly generate “Instagrammable” or TikTok-ready short-form video content using AI. By automating scriptwriting, voice generation, video editing, and scheduling, the app saves time and effort for content creators.
+
+**User Journey (High-Level)**  
+1. **Onboarding & Sign-Up**: Users create an account or log in.  
+2. **Initiate Content Project**: Users describe their content idea.  
+3. **Script Generation**: An AI language model generates a script.  
+4. **Audio & Video Creation**: The user selects a voice, and AI generates audio and accompanying video clips.  
+5. **Editing & Subtitles**: The user tweaks the video clips, reviews subtitles, and finalizes the reel.  
+6. **Scheduling & Posting**: Users can schedule or instantly post their reel to social media platforms.  
+7. **Exit or Reuse**: Users can exit the app or start a new project.
+
+---
+
+## 3. User Roles and Scenarios
+
+### 3.1 User Roles
+
+1. **Admin**  
+   - Manages overall platform settings (e.g., user permissions, feature toggles).  
+   - Oversees content moderation, usage analytics, and resolves technical issues.
+
+2. **Regular User**  
+   - Primary role for content creators wanting to generate short videos.  
+   - Can create and manage their content, schedule posts, and save project drafts.
+
+### 3.2 Typical User Scenarios
+
+1. **Content Creator (Regular User) Scenario**  
+   - Wants to produce a high-quality TikTok reel in under 10 minutes.  
+   - Uses the AI features to generate a script, select a voice, and compile images or video clips quickly.  
+   - Reviews and edits final reel before posting.
+
+2. **Admin Scenario**  
+   - Logs in to manage user accounts and address any reported videos.  
+   - Adjusts AI settings or voice options (e.g., adding new voice profiles) based on user feedback.  
+   - Views analytics on app usage.
+
+---
+
+## 4. Feature-Based Workflows
+
+Below is a breakdown of each core feature, detailing user entry points, step-by-step workflows, and outcomes.
+
+### 4.1 AI Video Creation & Editing
+
+- **User Entry Point**:  
+  - “New Project” button on the dashboard.  
+  - Or from a “Create” shortcut on the home screen.
+
+- **Step-by-Step Workflow**:  
+  1. **Create New Project**: User taps “New Project.”  
+  2. **Enter Project Details**: User provides a title or description of the video concept.  
+  3. **AI Script Generation**: The app’s LLM generates a script based on the description.  
+  4. **Script Review**: User reviews the script, edits if necessary, or regenerates for alternative suggestions.  
+  5. **Voice Selection**: User selects from a list of AI voices.  
+  6. **Audio Generation**: The app synthesizes audio using the selected AI voice.  
+  7. **Video Clip Generation**: AI compiles relevant video clips or still images based on the script.  
+  8. **Video + Audio Merge**: The generated audio track is automatically synchronized with the video clips.  
+  9. **Preview & Edit**: User previews the combined video and can rearrange clips, trim sections, or add overlays.
+
+- **Outcome**:  
+  - A cohesive video draft with audio narration, ready for further editing or subtitles.
+
+### 4.2 Content Generation (Images, Text, Voice)
+
+- **User Entry Point**:  
+  - From the “Assets” section of a project or via a “Generate Content” button within the editing interface.
+
+- **Step-by-Step Workflow**:  
+  1. **Select Content Type**: User chooses to generate images, text (script), or voice.  
+  2. **Provide Prompts**: User enters prompts or keywords for the AI (e.g., “urban skyline at night” for images).  
+  3. **AI Processing**: App generates multiple options.  
+  4. **Review & Pick**: User selects the preferred options or requests more variations.  
+  5. **Add to Project**: Chosen content is automatically added to the current project.
+
+- **Outcome**:  
+  - The user has AI-generated assets (text, images, or voice segments) to incorporate into the final reel.
+
+### 4.3 Scheduling & Posting Capabilities
+
+- **User Entry Point**:  
+  - An option appears once a video is finalized or from the main project screen.
+
+- **Step-by-Step Workflow**:  
+  1. **Project Finalization**: User completes editing and is satisfied with the final reel.  
+  2. **Schedule or Post**: User taps “Schedule/Post.”  
+  3. **Set Platform & Time**: User chooses social platforms (Instagram, TikTok) and selects a date/time or chooses “Post Now.”  
+  4. **Confirm Permissions**: User grants app permission to post on their behalf or manually downloads to post.  
+  5. **Confirmation**: The app confirms the scheduled post or immediate posting.  
+  6. **Notifications**: User receives notifications about scheduled times or posting status.
+
+- **Outcome**:  
+  - Reel is scheduled or posted to the user’s social media account(s).  
+  - A success message confirms the post is live or scheduled.
+
+---
+
+## 5. End-to-End User Journey
+
+This section maps the **entire flow of the app**, from first contact to exit.
+
+1. **App Launch & Onboarding**  
+   - **New User**: Proceeds to sign up (email, social media login, etc.).  
+   - **Returning User**: Logs in with existing credentials.  
+   - Optional in-app tutorial or tips on how to use AI generation.
+
+2. **Home/Dashboard View**  
+   - Shows current projects, analytics (e.g., how many views or scheduled posts), and “New Project” button.
+
+3. **Create a New Project**  
+   - Provide project name or idea.  
+   - AI generates initial script.  
+   - Review, edit, or regenerate script.
+
+4. **Audio & Video Generation**  
+   - Choose voice.  
+   - AI processes script for voiceover.  
+   - AI suggests or auto-generates video clips or images.  
+   - User previews and edits.
+
+5. **Subtitles/Overlays**  
+   - App automatically adds captions from the script.  
+   - User adjusts subtitle font, color, or position.  
+   - Optional overlays (text boxes, stickers, call to action).
+
+6. **Tweak & Finalize**  
+   - User reviews final reel.  
+   - Trims excess footage, adjusts audio levels, or changes transitions.
+
+7. **Scheduling & Posting**  
+   - User selects date/time to post or posts immediately.  
+   - Can choose one or multiple social platforms.  
+   - Receives confirmation.
+
+8. **Project Completion & Exit**  
+   - User returns to the dashboard.  
+   - Can create a new project, view analytics, or log out.
+
+9. **Error & Exception Handling**  
+   - If script generation fails: The app provides alternative generation attempts or fallback messages.  
+   - If audio synthesis fails: The app prompts user to switch voice or re-try generation.  
+   - If posting fails: The app provides a notification and suggests manual download and posting.
+
+---
+
+## 6. Feature Interdependencies
+
+- **AI Video Creation** ↔ **Content Generation**  
+  - Script generation heavily relies on the LLM. The voiceover feature depends on the script.  
+  - AI images or video clips also depend on textual prompts generated during the script creation.
+
+- **Editing Tools** ↔ **Video & Audio Generation**  
+  - Once the audio track and video clips are generated, the editing tools rely on these assets to function properly.
+
+- **Scheduling & Posting** ↔ **Finalized Media**  
+  - Scheduling can only happen once a project has a complete video.  
+  - The posting feature might require a completed reel with valid audio and video.
+
+---
+
+## 7. Workflow Diagram (Optional)
+
+*(Below is a suggested structure for a high-level diagram. Actual diagrams can be created in tools like Lucidchart, Miro, or any flowchart tool.)*
+
+```
+[Launch App] 
+   ↓
+[Onboarding / Login]
+   ↓
+[Dashboard] → [New Project] → [Enter Project Details] → [Generate Script] 
+   ↓                       ↑
+ [View Existing Projects]   → [Review/Regenerate Script] → [Select Voice] → [Generate Audio]
+   ↓                                                              ↓
+ [Schedule/Manage Posts] ← [Generate Video Clips from Text] ← [AI Content Generation]
+   ↓
+[Confirm Video + Audio] → [Add Subtitles] → [Edit Reel] → [Finalize Reel] 
+   ↓
+[Schedule / Post / Save Draft]
+   ↓
+[Exit or Start New Project]
+```
+
+---
+
+## 8. Assumptions and Open Questions
+
+### Assumptions
+
+1. **AI Accuracy**: The LLM can reliably generate relevant scripts from user-provided ideas.  
+2. **Media Storage**: The app stores generated video/audio in the user’s project library until deleted.  
+3. **Social Media API Access**: The app is authorized to post directly to Instagram and TikTok on behalf of the user.  
+4. **Editing Tools**: Basic editing tools (trim, cut, subtitle edits) are sufficient. More advanced editing (e.g., color correction, advanced transitions) may be out of scope initially.  
+5. **Monetization**: There could be a subscription model for advanced features or premium voice options, though not specified in the workflows.
+
+### Open Questions
+
+1. **Access Levels**: Are there any special Admin workflows for approving or moderating generated content?  
+2. **File Export**: Besides direct posting, will users want to export the final reel to their device in a specific format (MP4, MOV, etc.)?  
+3. **Additional Editing Features**: Is there a need for advanced overlays, filters, or interactive elements in the reel?  
+4. **Analytics**: Do we show analytics (views, engagement) within the app, or is that data only accessible via the social platforms?  
+5. **Team Collaboration**: Will multiple users collaborate on a single project, or is it single-user only?
+
+---
+
+## Additional Suggestions
+
+1. **Simple Project Management**: Consider adding a feature to organize multiple projects with tags or categories.  
+2. **Template Library**: Offer prebuilt templates for certain types of reels (e.g., product promos, travel vlogs).  
+3. **Multi-Platform Posting**: Expand scheduling to other platforms (YouTube Shorts, Facebook).  
+4. **User Education**: Provide short tutorial videos or tooltips to guide new users through the AI generation process.  
+5. **Voice Variations**: Allow pitch/speed adjustments for voiceovers to give users more creative control.
+
+---
+
+### Conclusion
+
+This **App Workflow Document** should serve as a roadmap for designing and developing the user experience of the AI-powered reel creation app. By following these workflows, designers and developers can ensure that users can intuitively create, edit, and share short-form video content with minimal friction.
+
+================
+File: eslint.config.mjs
+================
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { FlatCompat } from "@eslint/eslintrc";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const compat = new FlatCompat({
+  baseDirectory: __dirname,
+});
+
+const eslintConfig = [
+  ...compat.extends("next/core-web-vitals", "next/typescript"),
+];
+
+export default eslintConfig;
+
+================
+File: instructions.md
+================
+Instructions for Aider and other LLM tools:
+Keep it simple!
+
+1. Embrace Simplicity Over Cleverness
+- Write code that's immediately understandable to others
+- If a solution feels complex, it probably needs simplification
+- Optimize for readability first, performance second unless proven otherwise
+- Avoid premature optimization
+
+2. Focus on Core Functionality
+- Start with the minimum viable solution
+- Question every feature: "Is this really necessary?"
+- Build incrementally based on actual needs, not hypothetical ones
+- Delete unnecessary code and features
+
+3. Leverage Existing Solutions
+- Use standard libraries whenever possible
+- Don't reinvent the wheel
+- Choose well-maintained, popular libraries for common tasks
+- Keep dependencies minimal but practical
+
+4. Function Design
+- Each function should have a single responsibility
+- Keep functions short (typically under 20 lines)
+- Use descriptive names that indicate purpose
+- Limit number of parameters (3 or fewer is ideal)
+
+5. Project Structure
+- Keep related code together
+- Use consistent file organization
+- Maintain a flat structure where possible
+- Group by feature rather than type
+
+```plaintext
+# Good project structure
+project/
+├── main.py
+├── config.py
+├── users/
+│   ├── models.py
+│   ├── services.py
+│   └── tests/
+└── utils/
+    └── helpers.py
+```
+
+6. Code Review Guidelines
+- Review for simplicity first
+- Question complexity and overengineering
+- Look for duplicate code and abstraction opportunities
+- Ensure consistent style and naming conventions
+
+7. Maintenance Practices
+- Regularly remove unused code
+- Keep dependencies updated
+- Refactor when code becomes unclear
+- Document only what's necessary and likely to change
+
+Remember:
+- Simple code is easier to maintain and debug
+- Write code for humans first, computers second
+- Add complexity only when justified by requirements
+- If you can't explain your code simply, it's probably too complex
+
+
+Complexity is what kills you
+When you finish editing, present me with a list of options of how we could continue. Indicate what you think should be the next step
+When I just send you the letter c, I mean continue
+Make scripts executable
+Add docstrings or comments only to explain the why 
+When you see comments or docstrings that are not necessary remove them.
+Use type hints when possible.
+
+Use descriptive, meaningful names for variables, functions, and classes
+
+Group related code together
+Use consistent indentation (typically 2 or 4 spaces)
+Add spacing between logical sections
+
+Handle potential errors explicitly
+Validate input data
+Return meaningful error messages
+
+Use consistent formatting
+Avoid deep nesting of conditionals
+
+## Common Anti-Patterns to Avoid
+
+1. God Classes: Classes that do too much
+2. Feature Envy: Methods that use more features of other classes than their own
+3. Long Parameter Lists: Methods with too many parameters
+4. Tight Coupling: Classes that know too much about each other
+5. Premature Optimization: Making code complex for theoretical performance gains
+
+
+## How to solve bugs 
+Reflect on 5 -7 different possible sources of the problem, distill those down to 1-2 most likely sources, and then add logs to validate your assumptions before we move onto implementing the actual code fix.
+
+================
+File: middleware.ts
+================
+import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
+
+export function middleware(request: NextRequest) {
+  // Allow access to media files
+  if (request.nextUrl.pathname.startsWith('/api/media/')) {
+    return NextResponse.next();
+  }
+
+  // Your other middleware logic here...
+  return NextResponse.next();
+}
+
+export const config = {
+  matcher: [
+    '/api/:path*',
+    // Add other paths that need middleware
+  ],
+}
+
+================
+File: next.config.ts
+================
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+
+================
+File: package.json
+================
+{
+  "name": "reelin",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@deepgram/sdk": "^3.11.1",
+    "@fal-ai/client": "^1.2.3",
+    "@google/generative-ai": "^0.22.0",
+    "@radix-ui/react-label": "^2.1.2",
+    "@radix-ui/react-radio-group": "^1.2.3",
+    "@radix-ui/react-slider": "^1.2.3",
+    "@radix-ui/react-slot": "^1.1.2",
+    "@radix-ui/react-tabs": "^1.1.3",
+    "@supabase/supabase-js": "^2.49.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.476.0",
+    "next": "15.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.0.2",
+    "tailwindcss-animate": "^1.0.7"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.2.0",
+    "supabase": "^2.15.8",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
+
+================
+File: postcss.config.mjs
+================
+const config = {
+  plugins: ["@tailwindcss/postcss"],
+};
+
+export default config;
+
+================
+File: tsconfig.json
+================
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+
+
+
+================================================================
+End of Codebase
+================================================================
