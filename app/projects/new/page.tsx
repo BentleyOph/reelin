@@ -1,4 +1,3 @@
-// app/projects/new/page.tsx
 "use client";
 
 import { useState } from "react";
@@ -23,12 +22,12 @@ export default function NewProjectPage() {
       const response = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: projectTitle, description: projectDescription }),
+        body: JSON.stringify({ title: projectTitle, description: projectDescription , userId: "123" }),
       });
-      
-      if (!response.ok) throw new Error("Failed to create project");
-      
       const data = await response.json();
+      
+      if (!response.ok) throw new Error("Failed to create project:" + data.error);
+      
       // Navigate to the script generation page with the new project ID
       router.push(`/projects/${data.id}/edit`);
     } catch (error) {

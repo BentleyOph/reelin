@@ -90,9 +90,8 @@ export async function getWordTimestamps(audioFilePath: string) {
     console.error(`Error generating word timestamps: ${error}`);
     // Return a fallback empty result to prevent the entire process from failing
     return {
-      utterances: [],
       words: [],
-      error: `Failed to generate timestamps: ${error.message || error}`
+      error: `Failed to generate timestamps: ${error}`
     };
   }
 }

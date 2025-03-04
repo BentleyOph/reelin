@@ -48,10 +48,10 @@ export async function POST(req: NextRequest) {
     const newProject = {
       title,
       description,
-      userId,
+      user_id: userId,
       status: 'draft' as const,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
     const { data, error } = await supabaseAdmin
